@@ -1,0 +1,10 @@
+PyQt6
+undetected-chromedriver
+cryptography
+psutil
+requests
+discord.py
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+webdriver-manager
