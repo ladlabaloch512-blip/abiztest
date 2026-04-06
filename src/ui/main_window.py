@@ -46,18 +46,24 @@ class MainWindow(QMainWindow):
         hwid_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         self.copy_btn = QPushButton("Copy HWID")
-        self.copy_btn.setFixedSize(150, 35)
+        self.copy_btn.setFixedSize(150, 40)
+        self.copy_btn.setStyleSheet("background-color: #313244; color: white; font-weight: bold; border-radius: 5px;")
         self.copy_btn.clicked.connect(self._copy_hwid)
 
         self.buy_btn = QPushButton("Buy Now")
-        self.buy_btn.setFixedSize(200, 50)
+        self.buy_btn.setFixedSize(150, 40)
         self.buy_btn.setStyleSheet("background-color: #25D366; color: white; font-weight: bold; border-radius: 5px;")
         self.buy_btn.clicked.connect(self._open_buy_link)
 
+        btn_layout = QHBoxLayout()
+        btn_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        btn_layout.setSpacing(20)
+        btn_layout.addWidget(self.copy_btn)
+        btn_layout.addWidget(self.buy_btn)
+
         layout.addWidget(title)
         layout.addWidget(hwid_label)
-        layout.addWidget(self.copy_btn, alignment=Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.buy_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addLayout(btn_layout)
 
         self.stack.addWidget(self.license_widget)
 
@@ -173,9 +179,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(tab, "Settings & Integrations")
 
     def _copy_hwid(self):
-        import QApplication
-        from PyQt6.QtWidgets import QApplication as QA
-        cb = QA.clipboard()
+        from PyQt6.QtWidgets import QApplication
+        cb = QApplication.clipboard()
         cb.setText(self.license_manager.get_hwid())
         QMessageBox.information(self, "Copied", "HWID copied to clipboard.")
 
