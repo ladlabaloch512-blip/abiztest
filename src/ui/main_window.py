@@ -45,12 +45,18 @@ class MainWindow(QMainWindow):
         hwid_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hwid_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
+        self.copy_btn = QPushButton("Copy HWID")
+        self.copy_btn.setFixedSize(150, 35)
+        self.copy_btn.clicked.connect(self._copy_hwid)
+
         self.buy_btn = QPushButton("Buy Now")
         self.buy_btn.setFixedSize(200, 50)
         self.buy_btn.setStyleSheet("background-color: #25D366; color: white; font-weight: bold; border-radius: 5px;")
+        self.buy_btn.clicked.connect(self._open_buy_link)
 
         layout.addWidget(title)
         layout.addWidget(hwid_label)
+        layout.addWidget(self.copy_btn, alignment=Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.buy_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self.stack.addWidget(self.license_widget)
@@ -165,6 +171,20 @@ class MainWindow(QMainWindow):
         layout.addStretch()
 
         self.tabs.addTab(tab, "Settings & Integrations")
+
+    def _copy_hwid(self):
+        import QApplication
+        from PyQt6.QtWidgets import QApplication as QA
+        cb = QA.clipboard()
+        cb.setText(self.license_manager.get_hwid())
+        QMessageBox.information(self, "Copied", "HWID copied to clipboard.")
+
+    def _open_buy_link(self):
+        import webbrowser
+        buy_link = self.license_manager.config.get("buy_link", "https://wa.me/1234567890")
+        hwid = self.license_manager.get_hwid()
+        full_link = f"{buy_link}?text=Hi,%20I%20want%20to%20buy%20the%20software.%20My%20HWID%20is:%20{hwid}"
+        webbrowser.open(full_link)
 
     def _check_license_on_startup(self):
         is_valid, message = self.license_manager.check_license()
