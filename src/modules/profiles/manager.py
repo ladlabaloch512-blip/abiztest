@@ -166,7 +166,7 @@ class ProfileManager:
         # Clean both internal and external profiles
         profiles = self.get_all_profiles()
         for p in profiles:
-            ext_path = p.get('external_path')
+            ext_path = p['external_path'] if 'external_path' in p.keys() else None
             if ext_path:
                 dir_path = os.path.join(ext_path, p['name'])
             else:

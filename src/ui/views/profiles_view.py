@@ -444,24 +444,29 @@ class ProfilesView(QWidget):
             self.load_groups()
             self.load_profiles()
 
+    @pyqtSlot(int, float)
+    def _on_cleanup_success(self, cleaned, freed_mb):
+        QMessageBox.information(self, "Cleanup Complete", f"Cleaned cache for {cleaned} profiles.\nFreed {freed_mb:.2f} MB of space.")
+
+    @pyqtSlot(str)
+    def _on_cleanup_error(self, error_msg):
+        QMessageBox.critical(self, "Error", f"Cleanup encountered an error: {error_msg}")
+
     def cleanup_profiles(self):
         reply = QMessageBox.question(self, "Cleanup Profiles", "This will delete all Cache and Temp files for all profiles.\nSessions/Cookies will be preserved.\n\nContinue?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
             # Run in a background thread to avoid UI freeze
             import threading
+            from PyQt6.QtCore import QMetaObject, Q_ARG, Qt
 
             def run_cleanup():
                 try:
                     cleaned, freed_bytes = self.profile_manager.cleanup_profile_files()
                     freed_mb = freed_bytes / (1024 * 1024)
-                    # We need to use a signal or QTimer to safely show QMessageBox from main thread
-                    # For simplicity, using a small QTimer delay injected back into the main loop
-                    from PyQt6.QtCore import QTimer
-                    QTimer.singleShot(0, lambda: QMessageBox.information(self, "Cleanup Complete", f"Cleaned cache for {cleaned} profiles.\nFreed {freed_mb:.2f} MB of space."))
+                    QMetaObject.invokeMethod(self, "_on_cleanup_success", Qt.ConnectionType.QueuedConnection, Q_ARG(int, cleaned), Q_ARG(float, freed_mb))
                 except Exception as e:
                     logger.error(f"Cleanup failed: {e}")
-                    from PyQt6.QtCore import QTimer
-                    QTimer.singleShot(0, lambda: QMessageBox.critical(self, "Error", f"Cleanup encountered an error: {e}"))
+                    QMetaObject.invokeMethod(self, "_on_cleanup_error", Qt.ConnectionType.QueuedConnection, Q_ARG(str, str(e)))
 
             self.cleanup_btn.setEnabled(False)
             self.cleanup_btn.setText("Cleaning...")
@@ -470,7 +475,7 @@ class ProfilesView(QWidget):
                 self.cleanup_btn.setEnabled(True)
                 self.cleanup_btn.setText("Files Cleanup")
 
-            thread = threading.Thread(target=run_cleanup)
+            thread = threading.Thread(target=run_cleanup, daemon=True)
             thread.start()
 
             # Simple polling to reset button
@@ -942,15 +947,26 @@ class ProfilesView(QWidget):
                         pass_field.send_keys(p)
 
                         # Find and click login button
-                        login_btn = wait.until(EC.presence_of_element_located((By.XPATH, "//button[@name='login'] | //input[@type='submit' and @name='login'] | //button[@type='submit' and contains(text(), 'Log in')] | //button[@type='submit' and contains(text(), 'Log In')]")))
-                        time.sleep(1) # Humanize slightly
+                        login_btn = wait.until(EC.presence_of_element_located((By.XPATH, "//*[@name='login' or @id='loginbutton' or @data-testid='royal_login_button'] | //input[@type='submit' and contains(@value, 'Log In')] | //button[@type='submit']")))
+                        # Shorten humanize delay to speed up process
+                        time.sleep(0.3)
                         try:
+                            # Ensure it's in view
+                            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", login_btn)
                             login_btn.click()
                         except Exception:
                             # Bypass overlapping elements (like cookie banners)
                             driver.execute_script("arguments[0].click();", login_btn)
 
                         logger.info(f"Auto-login submitted for {p_name}")
+
+                        # Captcha detection check (non-blocking)
+                        try:
+                            captcha_detected = WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "//*[contains(@id, 'captcha') or contains(@class, 'captcha') or contains(@src, 'captcha')]")))
+                            if captcha_detected:
+                                logger.warning(f"Captcha detected for {p_name}! Please solve it manually in the browser window.")
+                        except Exception:
+                            pass # No captcha, normal flow
                     except Exception as e:
                         logger.error(f"Auto-login failed for {p_name}: {e}")
 
