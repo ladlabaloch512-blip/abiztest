@@ -790,7 +790,8 @@ class ProfilesView(QWidget):
                 # Create custom task logic for login. Since we want to inject Selenium logic,
                 # we pass a callback or execute it in the Task manager. For now, we will
                 # wrap the auto-login logic into the BrowserLaunchTask by passing a special flag.
-                task = BrowserLaunchTask(profile_id, profile_name, proxy_info, custom_url="https://www.facebook.com/", external_path=profile_data.get('external_path'))
+                ext_path = profile_data['external_path'] if profile_data and 'external_path' in profile_data.keys() else None
+                task = BrowserLaunchTask(profile_id, profile_name, proxy_info, custom_url="https://www.facebook.com/", external_path=ext_path)
 
                 # We monkey-patch the task to execute login after result is emitted
                 def inject_login(driver, u=username, p=password, p_name=profile_name):
@@ -870,7 +871,8 @@ class ProfilesView(QWidget):
             if profile_data and profile_data['proxy_id']:
                 proxy_info = self.proxy_manager.get_proxy_by_id(profile_data['proxy_id'])
 
-            task = BrowserLaunchTask(profile_id, profile_name, proxy_info, custom_url, external_path=profile_data.get('external_path'))
+            ext_path = profile_data['external_path'] if profile_data and 'external_path' in profile_data.keys() else None
+            task = BrowserLaunchTask(profile_id, profile_name, proxy_info, custom_url, external_path=ext_path)
 
             # Connect task signals to the UI bridge to prevent cross-thread UI updates
             def make_running_callback(pid=profile_id):
