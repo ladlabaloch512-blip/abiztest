@@ -1,14 +1,19 @@
 import sys
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QPushButton, QLabel, QStackedWidget, QMessageBox,
-                             QTableWidget, QTableWidgetItem, QHeaderView, QTabWidget,
-                             QFormLayout, QLineEdit, QCheckBox)
+                             QPushButton, QLabel, QStackedWidget, QMessageBox)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
 
 from src.core.licensing import LicenseManager
 from src.utils.system import get_system_resources
 from src.utils.logger import get_logger
+
+from src.ui.views.sidebar import SidebarMenu
+from src.ui.views.profiles_view import ProfilesView
+from src.ui.views.autolist_view import AutoListView
+from src.ui.views.autologin_view import AutoLoginView
+from src.ui.views.messenger_view import MessengerView
+from src.ui.views.settings_view import SettingsView
 
 logger = get_logger("UI_MainWindow")
 
@@ -69,28 +74,47 @@ class MainWindow(QMainWindow):
 
     def _init_main_app_screen(self):
         self.app_widget = QWidget()
-        layout = QVBoxLayout(self.app_widget)
+        app_layout = QHBoxLayout(self.app_widget)
+        app_layout.setContentsMargins(0, 0, 0, 0)
+        app_layout.setSpacing(0)
 
-        # Header (System Monitor)
+        # Sidebar
+        self.sidebar = SidebarMenu()
+        self.sidebar.menu_selected.connect(self._switch_view)
+
+        # Main Content Area
+        self.content_area = QWidget()
+        content_layout = QVBoxLayout(self.content_area)
+        content_layout.setContentsMargins(20, 20, 20, 20)
+
+        # Top Header (System Monitor)
         header_layout = QHBoxLayout()
-        title = QLabel("Dashboard")
-        title.setFont(QFont("Arial", 18, QFont.Weight.Bold))
+        self.view_title = QLabel("Profiles & Proxies")
+        self.view_title.setFont(QFont("Arial", 20, QFont.Weight.Bold))
+        self.view_title.setStyleSheet("color: #cdd6f4;")
 
         self.sys_monitor_label = QLabel("CPU: 0% | RAM: 0%")
         self.sys_monitor_label.setFont(QFont("Arial", 10))
+        self.sys_monitor_label.setStyleSheet("color: #a6adc8; background-color: #313244; padding: 5px 10px; border-radius: 5px;")
 
-        header_layout.addWidget(title)
+        header_layout.addWidget(self.view_title)
         header_layout.addStretch()
         header_layout.addWidget(self.sys_monitor_label)
 
-        # Tabs
-        self.tabs = QTabWidget()
-        self._init_profiles_tab()
-        self._init_automation_tab()
-        self._init_settings_tab()
+        # Views Stack
+        self.views_stack = QStackedWidget()
+        self.views_stack.addWidget(ProfilesView())
+        self.views_stack.addWidget(AutoLoginView())
+        self.views_stack.addWidget(AutoListView())
+        self.views_stack.addWidget(MessengerView())
+        self.views_stack.addWidget(SettingsView())
 
-        layout.addLayout(header_layout)
-        layout.addWidget(self.tabs)
+        content_layout.addLayout(header_layout)
+        content_layout.addSpacing(10)
+        content_layout.addWidget(self.views_stack)
+
+        app_layout.addWidget(self.sidebar)
+        app_layout.addWidget(self.content_area)
 
         self.stack.addWidget(self.app_widget)
 
@@ -99,84 +123,10 @@ class MainWindow(QMainWindow):
         self.sys_timer.timeout.connect(self._update_sys_monitor)
         self.sys_timer.start(2000)
 
-    def _init_profiles_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-
-        # Actions Layout
-        actions_layout = QHBoxLayout()
-        btn_add = QPushButton("Create Bulk Profiles")
-        btn_import = QPushButton("Import Cookies/Profiles")
-        btn_export = QPushButton("Export Selected")
-        btn_delete = QPushButton("Delete Selected")
-        btn_start = QPushButton("Start Selected")
-
-        actions_layout.addWidget(btn_add)
-        actions_layout.addWidget(btn_import)
-        actions_layout.addWidget(btn_export)
-        actions_layout.addWidget(btn_delete)
-        actions_layout.addWidget(btn_start)
-
-        # Profiles Table
-        self.profiles_table = QTableWidget(0, 5)
-        self.profiles_table.setHorizontalHeaderLabels(["Select", "Name", "Group", "Proxy", "Status"])
-        self.profiles_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-
-        layout.addLayout(actions_layout)
-        layout.addWidget(self.profiles_table)
-        self.tabs.addTab(tab, "Profiles & Proxies")
-
-    def _init_automation_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-
-        form_layout = QFormLayout()
-        self.task_type = QLineEdit()
-        self.task_type.setPlaceholderText("e.g. Auto Listing, Messenger Sync")
-        form_layout.addRow("Select Task:", self.task_type)
-
-        btn_run = QPushButton("Queue Task")
-
-        # Task Queue Table
-        self.tasks_table = QTableWidget(0, 4)
-        self.tasks_table.setHorizontalHeaderLabels(["Task ID", "Type", "Target Profile", "Status"])
-        self.tasks_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-
-        layout.addLayout(form_layout)
-        layout.addWidget(btn_run)
-        layout.addWidget(QLabel("Task Queue:"))
-        layout.addWidget(self.tasks_table)
-
-        self.tabs.addTab(tab, "Automation Tasks")
-
-    def _init_settings_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-
-        form = QFormLayout()
-
-        # Discord Settings
-        self.discord_token = QLineEdit()
-        self.discord_channel = QLineEdit()
-        form.addRow(QLabel("<b>Discord Settings</b>"))
-        form.addRow("Bot Token:", self.discord_token)
-        form.addRow("Channel ID:", self.discord_channel)
-
-        # Cloud Sync Settings
-        self.client_secret = QLineEdit()
-        self.client_secret.setPlaceholderText("Path to Google Client Secret JSON")
-        form.addRow(QLabel("<b>Cloud Sync Settings</b>"))
-        form.addRow("Client Secret:", self.client_secret)
-
-        btn_auth_drive = QPushButton("Authenticate Google Drive")
-        btn_save = QPushButton("Save Settings")
-
-        layout.addLayout(form)
-        layout.addWidget(btn_auth_drive)
-        layout.addWidget(btn_save)
-        layout.addStretch()
-
-        self.tabs.addTab(tab, "Settings & Integrations")
+    def _switch_view(self, index):
+        self.views_stack.setCurrentIndex(index)
+        titles = ["Profiles & Proxies", "Auto Login", "Marketplace Auto-List", "Messenger & Discord", "Settings & Cloud Sync"]
+        self.view_title.setText(titles[index])
 
     def _copy_hwid(self):
         from PyQt6.QtWidgets import QApplication
