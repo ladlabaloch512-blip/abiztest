@@ -10,13 +10,14 @@ class TaskSignals(QObject):
     progress = pyqtSignal(int)  # Percentage
 
 class BrowserLaunchTask(QRunnable):
-    def __init__(self, profile_id, profile_name, proxy_info=None, custom_url=None, external_path=None):
+    def __init__(self, profile_id, profile_name, proxy_info=None, custom_url=None, external_path=None, automation_callback=None):
         super().__init__()
         self.profile_id = profile_id
         self.profile_name = profile_name
         self.proxy_info = proxy_info
         self.custom_url = custom_url
         self.external_path = external_path
+        self.automation_callback = automation_callback
         self.signals = TaskSignals()
         self.task_id = f"launch_{self.profile_name}"
 
@@ -40,6 +41,13 @@ class BrowserLaunchTask(QRunnable):
                         logger.error(f"Failed to load custom URL {self.custom_url}: {e}")
 
                 self.signals.result.emit(driver)
+
+                # Execute Selenium automation directly in this background thread
+                if self.automation_callback:
+                    try:
+                        self.automation_callback(driver)
+                    except Exception as ac_err:
+                        logger.error(f"Automation callback failed for {self.profile_name}: {ac_err}")
                 # Now wait for the driver to be manually closed
                 import time
                 try:

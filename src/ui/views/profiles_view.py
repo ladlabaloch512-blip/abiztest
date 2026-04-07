@@ -903,17 +903,19 @@ class ProfilesView(QWidget):
                 if profile_data and profile_data['proxy_id']:
                     proxy_info = self.proxy_manager.get_proxy_by_id(profile_data['proxy_id'])
 
-                # Create custom task logic for login. Since we want to inject Selenium logic,
-                # we pass a callback or execute it in the Task manager. For now, we will
-                # wrap the auto-login logic into the BrowserLaunchTask by passing a special flag.
-                ext_path = profile_data['external_path'] if profile_data and 'external_path' in profile_data.keys() else None
-                task = BrowserLaunchTask(profile_id, profile_name, proxy_info, custom_url="https://www.facebook.com/", external_path=ext_path)
-
-                # We monkey-patch the task to execute login after result is emitted
+                # We pass the automation_callback directly to the task so it runs in the background thread.
                 def inject_login(driver, u=username, p=password, p_name=profile_name):
                     try:
                         logger.info(f"Starting auto-login for {p_name} ({u})")
                         wait = WebDriverWait(driver, 15)
+
+                        # Handle cookie consent if it appears (common in EU/UK IPs)
+                        try:
+                            cookie_btn = WebDriverWait(driver, 3).until(EC.element_to_be_clickable((By.XPATH, "//button[@title='Allow all cookies' or @title='Decline optional cookies']")))
+                            cookie_btn.click()
+                            time.sleep(1)
+                        except:
+                            pass
 
                         # Wait for email field
                         email_field = wait.until(EC.presence_of_element_located((By.ID, "email")))
@@ -934,7 +936,8 @@ class ProfilesView(QWidget):
                     except Exception as e:
                         logger.error(f"Auto-login failed for {p_name}: {e}")
 
-                task.signals.result.connect(inject_login)
+                ext_path = profile_data['external_path'] if profile_data and 'external_path' in profile_data.keys() else None
+                task = BrowserLaunchTask(profile_id, profile_name, proxy_info, custom_url="https://www.facebook.com/", external_path=ext_path, automation_callback=inject_login)
 
                 def make_running_callback(pid=profile_id):
                     return lambda driver: self.signal_bridge.update_status(pid, "Running")
