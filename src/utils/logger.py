@@ -12,8 +12,13 @@ class SignaledLogHandler(logging.Handler, QObject):
         self.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 
     def emit(self, record):
-        msg = self.format(record)
-        self.log_signal.emit(record.levelname, msg)
+        try:
+            msg = self.format(record)
+            self.log_signal.emit(record.levelname, msg)
+        except RuntimeError:
+            # Ignore "wrapped C/C++ object of type SignaledLogHandler has been deleted"
+            # which happens during application shutdown when background threads (like undetected_chromedriver) log.
+            pass
 
 ui_log_handler = SignaledLogHandler()
 

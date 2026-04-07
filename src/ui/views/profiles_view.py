@@ -871,7 +871,10 @@ class ProfilesView(QWidget):
             credentials = []
             with open(file_path, 'r', encoding='utf-8') as f:
                 for line in f:
-                    parts = line.strip().split(',')
+                    line = line.strip()
+                    if not line or line.startswith('#') or 'username' in line.lower():
+                        continue
+                    parts = line.split(',')
                     if len(parts) >= 2:
                         credentials.append((parts[0].strip(), parts[1].strip()))
 
@@ -913,6 +916,13 @@ class ProfilesView(QWidget):
                         logger.info(f"Starting auto-login for {p_name} ({u})")
                         wait = WebDriverWait(driver, 15)
 
+                        # First, check if already logged in or not on the login page
+                        try:
+                            WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.XPATH, "//input[@id='email' or @name='email']")))
+                        except Exception:
+                            logger.info(f"Email field not found for {p_name}. Already logged in?")
+                            return
+
                         # Handle cookie consent if it appears (common in EU/UK IPs)
                         try:
                             cookie_btn = WebDriverWait(driver, 3).until(EC.element_to_be_clickable((By.XPATH, "//button[@title='Allow all cookies' or @title='Decline optional cookies']")))
@@ -922,19 +932,23 @@ class ProfilesView(QWidget):
                             pass
 
                         # Wait for email field
-                        email_field = wait.until(EC.presence_of_element_located((By.ID, "email")))
+                        email_field = wait.until(EC.presence_of_element_located((By.XPATH, "//input[@id='email' or @name='email']")))
                         email_field.clear()
                         email_field.send_keys(u)
 
                         # Wait for password field
-                        pass_field = wait.until(EC.presence_of_element_located((By.ID, "pass")))
+                        pass_field = wait.until(EC.presence_of_element_located((By.XPATH, "//input[@id='pass' or @name='pass']")))
                         pass_field.clear()
                         pass_field.send_keys(p)
 
-                        # Find and click login button (name='login')
-                        login_btn = wait.until(EC.element_to_be_clickable((By.NAME, "login")))
+                        # Find and click login button
+                        login_btn = wait.until(EC.presence_of_element_located((By.XPATH, "//button[@name='login'] | //input[@type='submit' and @name='login'] | //button[@type='submit' and contains(text(), 'Log in')] | //button[@type='submit' and contains(text(), 'Log In')]")))
                         time.sleep(1) # Humanize slightly
-                        login_btn.click()
+                        try:
+                            login_btn.click()
+                        except Exception:
+                            # Bypass overlapping elements (like cookie banners)
+                            driver.execute_script("arguments[0].click();", login_btn)
 
                         logger.info(f"Auto-login submitted for {p_name}")
                     except Exception as e:
