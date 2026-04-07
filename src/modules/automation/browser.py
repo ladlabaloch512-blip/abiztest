@@ -24,6 +24,14 @@ class BrowserManager:
         options.add_argument("--no-first-run")
         options.add_argument("--no-service-autorun")
 
+        # Make Chrome lightweight by restricting cache and disabling unnecessary services
+        options.add_argument("--disk-cache-size=1048576") # 1MB max cache
+        options.add_argument("--media-cache-size=1048576")
+        options.add_argument("--disable-logging")
+        options.add_argument("--disable-crash-reporter")
+        options.add_argument("--disable-in-process-stack-traces")
+        options.add_argument("--disable-features=OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction,Translate")
+
         # Remove --password-store=basic so that existing cookies/passwords
         # encrypted with OS keyring (DPAPI on Windows) remain accessible.
 

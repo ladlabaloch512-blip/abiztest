@@ -65,6 +65,22 @@ class BrowserLaunchTask(QRunnable):
                         driver.quit()
                     except:
                         pass
+
+                    # Perform deep auto-cleanup immediately to save disk space
+                    try:
+                        import os
+                        from src.modules.profiles.manager import ProfileManager
+                        if self.external_path:
+                            profile_dir = os.path.join(self.external_path, self.profile_name)
+                        else:
+                            profile_dir = os.path.join(os.getcwd(), 'data', 'browser_profiles', self.profile_name)
+
+                        if os.path.exists(profile_dir):
+                            ProfileManager.cleanup_single_profile_path(profile_dir)
+                            logger.info(f"Auto-cleanup completed for {self.profile_name}.")
+                    except Exception as clean_err:
+                        logger.debug(f"Auto-cleanup failed for {self.profile_name}: {clean_err}")
+
                 self.signals.finished.emit(self.task_id)
             else:
                 self.signals.error.emit((self.task_id, "Failed to launch driver (returned None)"))

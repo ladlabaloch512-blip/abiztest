@@ -106,56 +106,76 @@ class ProfileManager:
                         added_count += 1
         return added_count
 
+    @staticmethod
+    def cleanup_single_profile_path(dir_path):
+        import shutil
+        import os
+        freed_space = 0
+        cleaned_this_profile = False
+
+        targets = [
+            os.path.join(dir_path, "Default", "Cache"),
+            os.path.join(dir_path, "Default", "Code Cache"),
+            os.path.join(dir_path, "Default", "GPUCache"),
+            os.path.join(dir_path, "Default", "Service Worker", "CacheStorage"),
+            os.path.join(dir_path, "Default", "Service Worker", "ScriptCache"),
+            os.path.join(dir_path, "Crashpad"),
+            os.path.join(dir_path, "GrShaderCache"),
+            os.path.join(dir_path, "ShaderCache"),
+            os.path.join(dir_path, "DawnCache"),
+            os.path.join(dir_path, "BrowserMetrics"),
+            os.path.join(dir_path, "component_crx_cache"),
+            os.path.join(dir_path, "Default", "Media Cache"),
+            os.path.join(dir_path, "Default", "File System"),
+            os.path.join(dir_path, "Default", "Network", "Network Persistent State")
+        ]
+
+        for target_dir in targets:
+            if os.path.exists(target_dir):
+                if os.path.isfile(target_dir): # Network Persistent State is a file
+                    try:
+                        size = os.path.getsize(target_dir)
+                        os.unlink(target_dir)
+                        freed_space += size
+                        cleaned_this_profile = True
+                    except Exception as e:
+                        pass
+                else:
+                    for item in os.listdir(target_dir):
+                        item_path = os.path.join(target_dir, item)
+                        try:
+                            size = os.path.getsize(item_path) if os.path.isfile(item_path) else 0
+                            if os.path.isfile(item_path):
+                                os.unlink(item_path)
+                            elif os.path.isdir(item_path):
+                                size = sum(os.path.getsize(os.path.join(dp, fn)) for dp, _, fns in os.walk(item_path) for fn in fns)
+                                shutil.rmtree(item_path)
+                            freed_space += size
+                            cleaned_this_profile = True
+                        except Exception as e:
+                            logger.debug(f"Failed to delete {item_path}: {e}")
+
+        return cleaned_this_profile, freed_space
+
     def cleanup_profile_files(self):
-        """Cleans up Cache, Temp, and crashpad files for all profiles in the profiles directory."""
+        """Cleans up Cache, Temp, and crashpad files for all tracked profiles."""
         freed_space = 0
         cleaned_profiles = 0
-        import shutil
+        import os
 
-        if os.path.exists(self.profiles_dir):
-            for dir_name in os.listdir(self.profiles_dir):
-                dir_path = os.path.join(self.profiles_dir, dir_name)
-                if os.path.isdir(dir_path):
-                    targets = [
-                        os.path.join(dir_path, "Default", "Cache"),
-                        os.path.join(dir_path, "Default", "Code Cache"),
-                        os.path.join(dir_path, "Default", "GPUCache"),
-                        os.path.join(dir_path, "Default", "Service Worker", "CacheStorage"),
-                        os.path.join(dir_path, "Default", "Service Worker", "ScriptCache"),
-                        os.path.join(dir_path, "Crashpad"),
-                        os.path.join(dir_path, "GrShaderCache"),
-                        os.path.join(dir_path, "ShaderCache"),
-                        os.path.join(dir_path, "Default", "Network", "Network Persistent State")
-                    ]
+        # Clean both internal and external profiles
+        profiles = self.get_all_profiles()
+        for p in profiles:
+            ext_path = p.get('external_path')
+            if ext_path:
+                dir_path = os.path.join(ext_path, p['name'])
+            else:
+                dir_path = os.path.join(self.profiles_dir, p['name'])
 
-                    cleaned_this_profile = False
-
-                    for target_dir in targets:
-                        if os.path.exists(target_dir):
-                            if os.path.isfile(target_dir): # Network Persistent State is a file
-                                try:
-                                    size = os.path.getsize(target_dir)
-                                    os.unlink(target_dir)
-                                    freed_space += size
-                                    cleaned_this_profile = True
-                                except Exception as e:
-                                    pass
-                            else:
-                                for item in os.listdir(target_dir):
-                                    item_path = os.path.join(target_dir, item)
-                                    try:
-                                        size = os.path.getsize(item_path) if os.path.isfile(item_path) else 0
-                                        if os.path.isfile(item_path):
-                                            os.unlink(item_path)
-                                        elif os.path.isdir(item_path):
-                                            size = sum(os.path.getsize(os.path.join(dirpath, filename)) for dirpath, _, filenames in os.walk(item_path) for filename in filenames)
-                                            shutil.rmtree(item_path)
-                                        freed_space += size
-                                        cleaned_this_profile = True
-                                    except Exception as e:
-                                        logger.debug(f"Failed to delete {item_path}: {e}")
-
-                    if cleaned_this_profile:
-                        cleaned_profiles += 1
+            if os.path.isdir(dir_path):
+                cleaned, space = self.cleanup_single_profile_path(dir_path)
+                if cleaned:
+                    cleaned_profiles += 1
+                    freed_space += space
 
         return cleaned_profiles, freed_space
