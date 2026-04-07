@@ -16,13 +16,14 @@ class LicenseManager:
         self.hwid = self._generate_hwid()
 
     def _generate_hwid(self):
+        import hashlib
         # Generates a stable hardware ID.
         # For a truly secure system, this should query motherboard/disk serials via WMI on Windows.
         # Here we use uuid.getnode() as a basic cross-platform implementation.
         mac = uuid.getnode()
         hwid_raw = f"HWID-{mac}"
-        # A simple hash to obscure it
-        return self.security.encrypt(hwid_raw)[:32]
+        # Use a stable hash so HWID remains identical across restarts
+        return hashlib.sha256(hwid_raw.encode()).hexdigest()[:32]
 
     def get_hwid(self):
         return self.hwid

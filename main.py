@@ -36,6 +36,17 @@ def main():
             padding: 4px;
             border: none;
         }
+        QMessageBox {
+            background-color: #1e1e2e;
+        }
+        QMessageBox QLabel {
+            color: #cdd6f4;
+        }
+        QMessageBox QPushButton {
+            background-color: #89b4fa;
+            color: #11111b;
+            min-width: 80px;
+        }
     """)
 
     window = MainWindow()
