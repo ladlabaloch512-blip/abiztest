@@ -83,3 +83,55 @@ class ProfileManager:
     def get_profile_by_id(self, profile_id):
          query = "SELECT * FROM profiles WHERE id = ?"
          return self.db.fetchone(query, (profile_id,))
+
+    def scan_profiles(self):
+        """Scans the profiles directory and adds missing profiles to the database."""
+        added_count = 0
+        if os.path.exists(self.profiles_dir):
+            for dir_name in os.listdir(self.profiles_dir):
+                dir_path = os.path.join(self.profiles_dir, dir_name)
+                if os.path.isdir(dir_path):
+                    # Check if it exists in DB
+                    existing = self.db.fetchone("SELECT id FROM profiles WHERE name = ?", (dir_name,))
+                    if not existing:
+                        logger.info(f"Found orphaned profile directory: {dir_name}. Adding to DB.")
+                        self.create_profile(dir_name, "Imported")
+                        added_count += 1
+        return added_count
+
+    def cleanup_profile_files(self):
+        """Cleans up Cache and Temp files for all profiles in the profiles directory."""
+        freed_space = 0
+        cleaned_profiles = 0
+        import shutil
+
+        if os.path.exists(self.profiles_dir):
+            for dir_name in os.listdir(self.profiles_dir):
+                dir_path = os.path.join(self.profiles_dir, dir_name)
+                if os.path.isdir(dir_path):
+                    cache_dir = os.path.join(dir_path, "Default", "Cache")
+                    code_cache = os.path.join(dir_path, "Default", "Code Cache")
+                    gpu_cache = os.path.join(dir_path, "Default", "GPUCache")
+
+                    cleaned_this_profile = False
+
+                    for target_dir in [cache_dir, code_cache, gpu_cache]:
+                        if os.path.exists(target_dir):
+                            for item in os.listdir(target_dir):
+                                item_path = os.path.join(target_dir, item)
+                                try:
+                                    size = os.path.getsize(item_path) if os.path.isfile(item_path) else 0
+                                    if os.path.isfile(item_path):
+                                        os.unlink(item_path)
+                                    elif os.path.isdir(item_path):
+                                        size = sum(os.path.getsize(os.path.join(dirpath, filename)) for dirpath, _, filenames in os.walk(item_path) for filename in filenames)
+                                        shutil.rmtree(item_path)
+                                    freed_space += size
+                                    cleaned_this_profile = True
+                                except Exception as e:
+                                    logger.debug(f"Failed to delete {item_path}: {e}")
+
+                    if cleaned_this_profile:
+                        cleaned_profiles += 1
+
+        return cleaned_profiles, freed_space

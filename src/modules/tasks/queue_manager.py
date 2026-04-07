@@ -29,6 +29,23 @@ class BrowserLaunchTask(QRunnable):
 
             if driver:
                 self.signals.result.emit(driver)
+                # Now wait for the driver to be manually closed
+                import time
+                try:
+                    while True:
+                        # Will raise exception if driver window is closed/killed
+                        _ = driver.title
+                        time.sleep(1)
+                except Exception:
+                    logger.info(f"Browser profile {self.profile_name} closed.")
+                finally:
+                    # Clean up reference
+                    if self.profile_name in BrowserManager.active_drivers:
+                        del BrowserManager.active_drivers[self.profile_name]
+                    try:
+                        driver.quit()
+                    except:
+                        pass
                 self.signals.finished.emit(self.task_id)
             else:
                 self.signals.error.emit((self.task_id, "Failed to launch driver (returned None)"))

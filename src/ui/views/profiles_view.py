@@ -50,9 +50,10 @@ class ProfilesView(QWidget):
         self.group_combo.currentTextChanged.connect(self.load_profiles)
 
         self.scan_btn = QPushButton("Scan Profiles")
-        self.scan_btn.clicked.connect(self.load_profiles)
+        self.scan_btn.clicked.connect(self.scan_profiles)
         self.cleanup_btn = QPushButton("Files Cleanup")
         self.cleanup_btn.setStyleSheet("background-color: #f38ba8; color: #11111b;")
+        self.cleanup_btn.clicked.connect(self.cleanup_profiles)
 
         toolbar.addWidget(QLabel("Filter by Group:"))
         toolbar.addWidget(self.group_combo)
@@ -65,7 +66,9 @@ class ProfilesView(QWidget):
         self.btn_add = QPushButton("Create Bulk")
         self.btn_add.clicked.connect(self.create_bulk_profiles)
         self.btn_import = QPushButton("Import")
+        self.btn_import.clicked.connect(self.import_profiles)
         self.btn_export = QPushButton("Export")
+        self.btn_export.clicked.connect(self.export_profiles)
         self.btn_delete = QPushButton("Delete")
         self.btn_delete.setStyleSheet("background-color: #eba0ac; color: #11111b;")
         self.btn_delete.clicked.connect(self.delete_selected_profiles)
@@ -308,18 +311,71 @@ class ProfilesView(QWidget):
 
         dialog.exec()
 
+    def scan_profiles(self):
+        added = self.profile_manager.scan_profiles()
+        if added > 0:
+            QMessageBox.information(self, "Scan Complete", f"Found and added {added} orphaned profiles.")
+            self.load_groups()
+            self.load_profiles()
+        else:
+            QMessageBox.information(self, "Scan Complete", "No missing profiles found in the directory.")
+
+    def cleanup_profiles(self):
+        reply = QMessageBox.question(self, "Cleanup Profiles", "This will delete all Cache and Temp files for all profiles.\nSessions/Cookies will be preserved.\n\nContinue?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            cleaned, freed_bytes = self.profile_manager.cleanup_profile_files()
+            freed_mb = freed_bytes / (1024 * 1024)
+            QMessageBox.information(self, "Cleanup Complete", f"Cleaned cache for {cleaned} profiles.\nFreed {freed_mb:.2f} MB of space.")
+
     def import_profiles(self):
-        # Placeholder for profile import
-        logger.info("Import Profiles button clicked")
-        QMessageBox.information(self, "Import Profiles", "Select a folder containing profile backups or a cookies txt file.\n\n(Logic placeholder - files/cookies extraction to be implemented)")
+        import os
+        import shutil
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Directory containing Profiles to Import")
+        if dir_path:
+            imported_count = 0
+            for item in os.listdir(dir_path):
+                source_path = os.path.join(dir_path, item)
+                if os.path.isdir(source_path):
+                    target_path = os.path.join(self.profile_manager.profiles_dir, item)
+                    if not os.path.exists(target_path):
+                        shutil.copytree(source_path, target_path)
+                        self.profile_manager.create_profile(item, "Imported")
+                        imported_count += 1
+            if imported_count > 0:
+                QMessageBox.information(self, "Import Successful", f"Successfully imported {imported_count} profiles.")
+                self.load_groups()
+                self.load_profiles()
+            else:
+                QMessageBox.information(self, "Import Status", "No new profiles were found to import.")
 
     def export_profiles(self):
         selected_rows = self.table.selectionModel().selectedRows()
         if not selected_rows:
             QMessageBox.warning(self, "Selection", "Please select at least one profile to export.")
             return
-        logger.info(f"Export Profiles button clicked for {len(selected_rows)} profiles")
-        QMessageBox.information(self, "Export Profiles", f"Select export type (Full Profile / Only Cookies) for {len(selected_rows)} profiles.\n\n(Logic placeholder - zip generation to be implemented)")
+
+        export_dir = QFileDialog.getExistingDirectory(self, "Select Export Destination Folder")
+        if not export_dir:
+            return
+
+        import os
+        import shutil
+        exported_count = 0
+
+        for model_index in selected_rows:
+            row = model_index.row()
+            profile_name = self.table.item(row, 1).text()
+            source_path = os.path.join(self.profile_manager.profiles_dir, profile_name)
+
+            if os.path.exists(source_path):
+                target_path = os.path.join(export_dir, profile_name)
+                # If target already exists, we will overwrite or skip. For simplicity, remove first.
+                if os.path.exists(target_path):
+                    shutil.rmtree(target_path)
+                shutil.copytree(source_path, target_path)
+                exported_count += 1
+
+        QMessageBox.information(self, "Export Successful", f"Successfully exported {exported_count} profiles to:\n{export_dir}")
 
     def delete_selected_profiles(self):
         selected_rows = self.table.selectionModel().selectedRows()
@@ -358,15 +414,20 @@ class ProfilesView(QWidget):
             task = BrowserLaunchTask(profile_id, profile_name, proxy_info)
 
             # Connect task signals to the UI bridge to prevent cross-thread UI updates
+            def make_running_callback(pid=profile_id):
+                return lambda driver: self.signal_bridge.update_status(pid, "Running")
+
             def make_finished_callback(pid=profile_id):
-                return lambda t_id: self.signal_bridge.update_status(pid, "Running")
+                return lambda t_id: self.signal_bridge.update_status(pid, "Ready")
 
             def make_error_callback(pid=profile_id):
                 return lambda err: self.signal_bridge.update_status(pid, "Failed")
 
+            task.signals.result.connect(lambda driver: logger.info(f"Browser launched for profile {profile_id}"))
             task.signals.finished.connect(lambda t_id: logger.info(f"Launch task finished: {t_id}"))
             task.signals.error.connect(lambda err: logger.error(f"Launch task error: {err[1]}"))
 
+            task.signals.result.connect(make_running_callback(profile_id))
             task.signals.finished.connect(make_finished_callback(profile_id))
             task.signals.error.connect(make_error_callback(profile_id))
 

@@ -20,21 +20,21 @@ class ProxyManager:
         manifest_json = """
         {
             "version": "1.0.0",
-            "manifest_version": 2,
+            "manifest_version": 3,
             "name": "Chrome Proxy",
             "permissions": [
                 "proxy",
-                "tabs",
-                "unlimitedStorage",
                 "storage",
-                "<all_urls>",
                 "webRequest",
-                "webRequestBlocking"
+                "webRequestAuthProvider"
+            ],
+            "host_permissions": [
+                "<all_urls>"
             ],
             "background": {
-                "scripts": ["background.js"]
+                "service_worker": "background.js"
             },
-            "minimum_chrome_version":"22.0.0"
+            "minimum_chrome_version":"88.0.0"
         }
         """
 
@@ -51,18 +51,18 @@ class ProxyManager:
             }}
         }};
         chrome.proxy.settings.set({{value: config, scope: "regular"}}, function() {{}});
-        function callbackFn(details) {{
-            return {{
+        function callbackFn(details, callback) {{
+            callback({{
                 authCredentials: {{
                     username: "{proxy_user}",
                     password: "{proxy_pass}"
                 }}
-            }};
+            }});
         }}
         chrome.webRequest.onAuthRequired.addListener(
             callbackFn,
             {{urls: ["<all_urls>"]}},
-            ['blocking']
+            ['asyncBlocking']
         );
         """
 
@@ -74,6 +74,34 @@ class ProxyManager:
         except Exception as e:
             logger.error(f"Failed to create proxy extension: {e}")
             return None
+
+    def add_proxy(self, ip, port, username=None, password=None):
+        query = """
+            INSERT INTO proxies (ip, port, username, password, status)
+            VALUES (?, ?, ?, ?, ?)
+        """
+        params = (ip, port, username, password, "Untested")
+        cursor = self.db.execute(query, params)
+        if cursor:
+            logger.info(f"Proxy added: {ip}:{port}")
+            return cursor.lastrowid
+        return None
+
+    def get_all_proxies(self):
+        return self.db.fetchall("SELECT * FROM proxies")
+
+    def delete_proxy(self, proxy_id):
+        # Remove proxy from profiles first
+        self.db.execute("UPDATE profiles SET proxy_id = NULL WHERE proxy_id = ?", (proxy_id,))
+        return self.db.execute("DELETE FROM proxies WHERE id = ?", (proxy_id,)) is not None
+
+    def assign_proxy_to_profile(self, profile_id, proxy_id):
+        query = "UPDATE profiles SET proxy_id = ? WHERE id = ?"
+        return self.db.execute(query, (proxy_id, profile_id)) is not None
+
+    def get_proxy_by_id(self, proxy_id):
+        query = "SELECT * FROM proxies WHERE id = ?"
+        return self.db.fetchone(query, (proxy_id,))
 
     def test_proxy(self, proxy_str):
         # proxy_str format: ip:port:user:pass
