@@ -61,8 +61,11 @@ class ProfilesView(QWidget):
         toolbar.addWidget(self.scan_btn)
         toolbar.addWidget(self.cleanup_btn)
 
-        # Actions Toolbar
-        actions_bar = QHBoxLayout()
+        # Actions Toolbar (Split into two rows for better spacing)
+        actions_layout = QVBoxLayout()
+        actions_bar_1 = QHBoxLayout()
+        actions_bar_2 = QHBoxLayout()
+
         self.btn_add = QPushButton("Create Bulk")
         self.btn_add.clicked.connect(self.create_bulk_profiles)
         self.btn_import = QPushButton("Import")
@@ -79,6 +82,15 @@ class ProfilesView(QWidget):
         self.btn_proxies = QPushButton("Manage Proxies")
         self.btn_proxies.clicked.connect(self.open_proxy_manager)
 
+        actions_bar_1.addWidget(self.btn_add)
+        actions_bar_1.addWidget(self.btn_import)
+        actions_bar_1.addWidget(self.btn_export)
+        actions_bar_1.addWidget(self.btn_import_cookies)
+        actions_bar_1.addWidget(self.btn_export_cookies)
+        actions_bar_1.addWidget(self.btn_delete)
+        actions_bar_1.addWidget(self.btn_proxies)
+        actions_bar_1.addStretch()
+
         # Start options
         self.start_btn = QPushButton("Start Selected")
         self.start_btn.setStyleSheet("background-color: #a6e3a1; color: #11111b;")
@@ -93,18 +105,14 @@ class ProfilesView(QWidget):
         self.custom_url_input.setFixedWidth(200)
         self.start_btn.clicked.connect(self.start_selected_profiles)
 
-        actions_bar.addWidget(self.btn_add)
-        actions_bar.addWidget(self.btn_import)
-        actions_bar.addWidget(self.btn_export)
-        actions_bar.addWidget(self.btn_import_cookies)
-        actions_bar.addWidget(self.btn_export_cookies)
-        actions_bar.addWidget(self.btn_delete)
-        actions_bar.addWidget(self.btn_proxies)
-        actions_bar.addStretch()
-        actions_bar.addWidget(self.btn_auto_login)
-        actions_bar.addWidget(self.custom_url_input)
-        actions_bar.addWidget(self.one_by_one_cb)
-        actions_bar.addWidget(self.start_btn)
+        actions_bar_2.addStretch()
+        actions_bar_2.addWidget(self.btn_auto_login)
+        actions_bar_2.addWidget(self.custom_url_input)
+        actions_bar_2.addWidget(self.one_by_one_cb)
+        actions_bar_2.addWidget(self.start_btn)
+
+        actions_layout.addLayout(actions_bar_1)
+        actions_layout.addLayout(actions_bar_2)
 
         # Select All Checkbox (placed above table or in corner)
         self.select_all_cb = QCheckBox("Select All")
@@ -124,7 +132,7 @@ class ProfilesView(QWidget):
         self.table.customContextMenuRequested.connect(self.show_context_menu)
 
         top_layout.addLayout(toolbar)
-        top_layout.addLayout(actions_bar)
+        top_layout.addLayout(actions_layout)
         top_layout.addWidget(self.table)
 
         # Log Console
@@ -362,13 +370,90 @@ class ProfilesView(QWidget):
         dialog.exec()
 
     def scan_profiles(self):
-        added = self.profile_manager.scan_profiles()
-        if added > 0:
-            QMessageBox.information(self, "Scan Complete", f"Found and added {added} orphaned profiles.")
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Directory to Scan for Profiles")
+        if not dir_path:
+            return
+
+        import os
+        found_profiles = []
+        try:
+            for item in os.listdir(dir_path):
+                if os.path.isdir(os.path.join(dir_path, item)):
+                    found_profiles.append(item)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to read directory: {e}")
+            return
+
+        if not found_profiles:
+            QMessageBox.information(self, "Scan Complete", "No directories found in the selected folder.")
+            return
+
+        from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QDialogButtonBox, QVBoxLayout
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select Profiles to Import")
+        dialog.resize(400, 500)
+
+        layout = QVBoxLayout(dialog)
+
+        select_all_cb = QCheckBox("Select All")
+        layout.addWidget(select_all_cb)
+
+        list_widget = QListWidget()
+        for profile in found_profiles:
+            item = QListWidgetItem(profile)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            list_widget.addItem(item)
+
+        def toggle_all(state):
+            for i in range(list_widget.count()):
+                list_widget.item(i).setCheckState(Qt.CheckState.Checked if state == Qt.CheckState.Checked.value else Qt.CheckState.Unchecked)
+
+        select_all_cb.stateChanged.connect(toggle_all)
+        layout.addWidget(list_widget)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            selected_to_add = []
+            for i in range(list_widget.count()):
+                if list_widget.item(i).checkState() == Qt.CheckState.Checked:
+                    selected_to_add.append(list_widget.item(i).text())
+
+            if not selected_to_add:
+                return
+
+            import shutil
+            added = 0
+
+            # Need to normalize paths to check if they are the same directory
+            is_same_dir = os.path.normpath(dir_path) == os.path.normpath(self.profile_manager.profiles_dir)
+
+            for profile_name in selected_to_add:
+                # 1. Copy directory if it's from outside
+                if not is_same_dir:
+                    source_path = os.path.join(dir_path, profile_name)
+                    target_path = os.path.join(self.profile_manager.profiles_dir, profile_name)
+                    if not os.path.exists(target_path):
+                        try:
+                            shutil.copytree(source_path, target_path)
+                        except Exception as e:
+                            logger.error(f"Failed to copy profile {profile_name}: {e}")
+                            continue
+
+                # 2. Add to database if not exists
+                existing = self.profile_manager.db.fetchone("SELECT id FROM profiles WHERE name = ?", (profile_name,))
+                if not existing:
+                    self.profile_manager.create_profile(profile_name, "Imported")
+                    added += 1
+
+            QMessageBox.information(self, "Scan Complete", f"Successfully imported and registered {added} profiles.")
             self.load_groups()
             self.load_profiles()
-        else:
-            QMessageBox.information(self, "Scan Complete", "No missing profiles found in the directory.")
 
     def cleanup_profiles(self):
         reply = QMessageBox.question(self, "Cleanup Profiles", "This will delete all Cache and Temp files for all profiles.\nSessions/Cookies will be preserved.\n\nContinue?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
