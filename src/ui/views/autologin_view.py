@@ -1,4 +1,5 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QSpinBox
+from PyQt6.QtCore import Qt
 
 class AutoLoginView(QWidget):
     def __init__(self):
