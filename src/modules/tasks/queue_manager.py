@@ -31,7 +31,10 @@ class BrowserLaunchTask(QRunnable):
             if driver:
                 if self.custom_url:
                     try:
-                        driver.get(self.custom_url)
+                        url = self.custom_url
+                        if not url.startswith("http://") and not url.startswith("https://"):
+                            url = "https://" + url
+                        driver.get(url)
                     except Exception as e:
                         logger.error(f"Failed to load custom URL {self.custom_url}: {e}")
 
@@ -67,6 +70,9 @@ class TaskQueueManager:
         if cls._instance is None:
             cls._instance = super(TaskQueueManager, cls).__new__(cls)
             cls._instance.threadpool = QThreadPool()
+            # Increase max thread count so holding threads open with the while loop
+            # doesn't starve the pool and prevent other profiles from launching.
+            cls._instance.threadpool.setMaxThreadCount(50)
             logger.info(f"Task Queue initialized. Max threads: {cls._instance.threadpool.maxThreadCount()}")
         return cls._instance
 

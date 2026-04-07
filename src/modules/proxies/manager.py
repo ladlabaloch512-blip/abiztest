@@ -67,10 +67,17 @@ class ProxyManager:
         """
 
         try:
-            with zipfile.ZipFile(extension_path, 'w') as zp:
-                zp.writestr("manifest.json", manifest_json)
-                zp.writestr("background.js", background_js)
-            return extension_path
+            # undetected_chromedriver prefers loading unpacked extensions
+            extension_dir = os.path.join(self.extensions_dir, f"proxy_{proxy_id}")
+            os.makedirs(extension_dir, exist_ok=True)
+
+            with open(os.path.join(extension_dir, "manifest.json"), "w", encoding="utf-8") as f:
+                f.write(manifest_json)
+
+            with open(os.path.join(extension_dir, "background.js"), "w", encoding="utf-8") as f:
+                f.write(background_js)
+
+            return extension_dir
         except Exception as e:
             logger.error(f"Failed to create proxy extension: {e}")
             return None

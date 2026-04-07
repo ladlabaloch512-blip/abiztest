@@ -100,7 +100,7 @@ class ProfileManager:
         return added_count
 
     def cleanup_profile_files(self):
-        """Cleans up Cache and Temp files for all profiles in the profiles directory."""
+        """Cleans up Cache, Temp, and crashpad files for all profiles in the profiles directory."""
         freed_space = 0
         cleaned_profiles = 0
         import shutil
@@ -109,27 +109,44 @@ class ProfileManager:
             for dir_name in os.listdir(self.profiles_dir):
                 dir_path = os.path.join(self.profiles_dir, dir_name)
                 if os.path.isdir(dir_path):
-                    cache_dir = os.path.join(dir_path, "Default", "Cache")
-                    code_cache = os.path.join(dir_path, "Default", "Code Cache")
-                    gpu_cache = os.path.join(dir_path, "Default", "GPUCache")
+                    targets = [
+                        os.path.join(dir_path, "Default", "Cache"),
+                        os.path.join(dir_path, "Default", "Code Cache"),
+                        os.path.join(dir_path, "Default", "GPUCache"),
+                        os.path.join(dir_path, "Default", "Service Worker", "CacheStorage"),
+                        os.path.join(dir_path, "Default", "Service Worker", "ScriptCache"),
+                        os.path.join(dir_path, "Crashpad"),
+                        os.path.join(dir_path, "GrShaderCache"),
+                        os.path.join(dir_path, "ShaderCache"),
+                        os.path.join(dir_path, "Default", "Network", "Network Persistent State")
+                    ]
 
                     cleaned_this_profile = False
 
-                    for target_dir in [cache_dir, code_cache, gpu_cache]:
+                    for target_dir in targets:
                         if os.path.exists(target_dir):
-                            for item in os.listdir(target_dir):
-                                item_path = os.path.join(target_dir, item)
+                            if os.path.isfile(target_dir): # Network Persistent State is a file
                                 try:
-                                    size = os.path.getsize(item_path) if os.path.isfile(item_path) else 0
-                                    if os.path.isfile(item_path):
-                                        os.unlink(item_path)
-                                    elif os.path.isdir(item_path):
-                                        size = sum(os.path.getsize(os.path.join(dirpath, filename)) for dirpath, _, filenames in os.walk(item_path) for filename in filenames)
-                                        shutil.rmtree(item_path)
+                                    size = os.path.getsize(target_dir)
+                                    os.unlink(target_dir)
                                     freed_space += size
                                     cleaned_this_profile = True
                                 except Exception as e:
-                                    logger.debug(f"Failed to delete {item_path}: {e}")
+                                    pass
+                            else:
+                                for item in os.listdir(target_dir):
+                                    item_path = os.path.join(target_dir, item)
+                                    try:
+                                        size = os.path.getsize(item_path) if os.path.isfile(item_path) else 0
+                                        if os.path.isfile(item_path):
+                                            os.unlink(item_path)
+                                        elif os.path.isdir(item_path):
+                                            size = sum(os.path.getsize(os.path.join(dirpath, filename)) for dirpath, _, filenames in os.walk(item_path) for filename in filenames)
+                                            shutil.rmtree(item_path)
+                                        freed_space += size
+                                        cleaned_this_profile = True
+                                    except Exception as e:
+                                        logger.debug(f"Failed to delete {item_path}: {e}")
 
                     if cleaned_this_profile:
                         cleaned_profiles += 1

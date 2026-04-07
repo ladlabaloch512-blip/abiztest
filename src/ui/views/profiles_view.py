@@ -69,6 +69,10 @@ class ProfilesView(QWidget):
         self.btn_import.clicked.connect(self.import_profiles)
         self.btn_export = QPushButton("Export")
         self.btn_export.clicked.connect(self.export_profiles)
+        self.btn_import_cookies = QPushButton("Import Cookies")
+        self.btn_import_cookies.clicked.connect(self.import_cookies)
+        self.btn_export_cookies = QPushButton("Export Cookies")
+        self.btn_export_cookies.clicked.connect(self.export_cookies)
         self.btn_delete = QPushButton("Delete")
         self.btn_delete.setStyleSheet("background-color: #eba0ac; color: #11111b;")
         self.btn_delete.clicked.connect(self.delete_selected_profiles)
@@ -78,6 +82,11 @@ class ProfilesView(QWidget):
         # Start options
         self.start_btn = QPushButton("Start Selected")
         self.start_btn.setStyleSheet("background-color: #a6e3a1; color: #11111b;")
+
+        self.btn_auto_login = QPushButton("FB Auto Login")
+        self.btn_auto_login.setStyleSheet("background-color: #89b4fa; color: #11111b;")
+        self.btn_auto_login.clicked.connect(self.start_auto_login)
+
         self.one_by_one_cb = QCheckBox("One by One")
         self.custom_url_input = QLineEdit()
         self.custom_url_input.setPlaceholderText("Custom URL on Open (Optional)")
@@ -87,9 +96,12 @@ class ProfilesView(QWidget):
         actions_bar.addWidget(self.btn_add)
         actions_bar.addWidget(self.btn_import)
         actions_bar.addWidget(self.btn_export)
+        actions_bar.addWidget(self.btn_import_cookies)
+        actions_bar.addWidget(self.btn_export_cookies)
         actions_bar.addWidget(self.btn_delete)
         actions_bar.addWidget(self.btn_proxies)
         actions_bar.addStretch()
+        actions_bar.addWidget(self.btn_auto_login)
         actions_bar.addWidget(self.custom_url_input)
         actions_bar.addWidget(self.one_by_one_cb)
         actions_bar.addWidget(self.start_btn)
@@ -411,7 +423,17 @@ class ProfilesView(QWidget):
             return
 
         import os
+        import json
+        import sqlite3
         import zipfile
+        import base64
+        import tempfile
+        try:
+            import win32crypt
+        except ImportError:
+            QMessageBox.warning(self, "Missing Dependency", "The 'pywin32' package is required for cross-device cookie export on Windows.")
+            return
+
         exported_count = 0
 
         try:
@@ -434,6 +456,120 @@ class ProfilesView(QWidget):
             logger.error(f"Failed to export ZIP: {e}")
             QMessageBox.critical(self, "Export Error", f"Failed to export profiles: {e}")
 
+    def export_cookies(self):
+        selected_rows = self.get_selected_rows()
+        if not selected_rows:
+            QMessageBox.warning(self, "Selection", "Please select at least one profile to export cookies from.")
+            return
+
+        export_file, _ = QFileDialog.getSaveFileName(self, "Save Cookies as ZIP", "cookies_backup.zip", "ZIP Files (*.zip)")
+        if not export_file:
+            return
+
+        import os
+        import zipfile
+        exported_count = 0
+
+        try:
+            with zipfile.ZipFile(export_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for row in selected_rows:
+                    profile_name = self.table.item(row, 2).text()
+                    source_path = os.path.join(self.profile_manager.profiles_dir, profile_name)
+
+                    cookies_path = os.path.join(source_path, "Default", "Network", "Cookies")
+                    local_state_path = os.path.join(source_path, "Local State")
+
+                    if os.path.exists(cookies_path) and os.path.exists(local_state_path):
+                        # Extract DPAPI key
+                        try:
+                            with open(local_state_path, "r", encoding="utf-8") as f:
+                                local_state = json.load(f)
+                            encrypted_key = base64.b64decode(local_state["os_crypt"]["encrypted_key"])
+                            encrypted_key = encrypted_key[5:] # Remove DPAPI prefix
+                            decrypted_key = win32crypt.CryptUnprotectData(encrypted_key, None, None, None, 0)[1]
+
+                            # Connect to SQLite DB
+                            from Crypto.Cipher import AES
+
+                            def decrypt_value(enc_value, key):
+                                try:
+                                    iv = enc_value[3:15]
+                                    payload = enc_value[15:]
+                                    cipher = AES.new(key, AES.MODE_GCM, iv)
+                                    return cipher.decrypt(payload)[:-16].decode()
+                                except Exception:
+                                    return ""
+
+                            conn = sqlite3.connect(cookies_path)
+                            cursor = conn.cursor()
+                            cursor.execute("SELECT host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly FROM cookies")
+
+                            cookies_list = []
+                            for host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly in cursor.fetchall():
+                                decrypted_val = value
+                                if encrypted_value:
+                                    decrypted_val = decrypt_value(encrypted_value, decrypted_key)
+
+                                cookies_list.append({
+                                    "domain": host_key,
+                                    "name": name,
+                                    "value": decrypted_val,
+                                    "path": path,
+                                    "expirationDate": expires_utc / 1000000 - 11644473600 if expires_utc else None,
+                                    "secure": bool(is_secure),
+                                    "httpOnly": bool(is_httponly)
+                                })
+                            conn.close()
+
+                            # Write JSON to ZIP
+                            if cookies_list:
+                                json_data = json.dumps(cookies_list, indent=4)
+                                zipf.writestr(f"{profile_name}_cookies.json", json_data)
+                                exported_count += 1
+
+                        except Exception as e:
+                            logger.error(f"Error decrypting cookies for {profile_name}: {e}")
+
+            QMessageBox.information(self, "Export Successful", f"Successfully exported decrypted JSON cookies for {exported_count} profiles to:\n{export_file}")
+        except Exception as e:
+            logger.error(f"Failed to export cookies ZIP: {e}")
+            QMessageBox.critical(self, "Export Error", f"Failed to export cookies: {e}")
+
+    def import_cookies(self):
+        import os
+        import json
+        import zipfile
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select ZIP Cookies Backup to Import", "", "ZIP Files (*.zip)")
+        if file_path:
+            try:
+                imported_count = 0
+                with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                    for filename in zip_ref.namelist():
+                        if filename.endswith("_cookies.json"):
+                            profile_name = filename.replace("_cookies.json", "")
+                            target_path = os.path.join(self.profile_manager.profiles_dir, profile_name)
+
+                            # Create profile if it doesn't exist to allow true cross-device migration
+                            if not os.path.exists(target_path):
+                                os.makedirs(target_path, exist_ok=True)
+                                self.profile_manager.create_profile(profile_name, "Imported")
+
+                            # Save the JSON file into the profile directory so the auto-login/startup routine can inject it
+                            extract_path = os.path.join(target_path, "import_cookies.json")
+                            with open(extract_path, "wb") as f:
+                                f.write(zip_ref.read(filename))
+                            imported_count += 1
+
+                if imported_count > 0:
+                    self.load_groups()
+                    self.load_profiles()
+                    QMessageBox.information(self, "Import Successful", f"Successfully imported cookies for {imported_count} profiles.\nThey will be injected on next launch.")
+                else:
+                    QMessageBox.information(self, "Import Status", "No cookies were imported.")
+            except Exception as e:
+                logger.error(f"Failed to import cookies ZIP: {e}")
+                QMessageBox.critical(self, "Import Error", f"Failed to import cookies: {e}")
+
     def delete_selected_profiles(self):
         selected_rows = self.get_selected_rows()
         if not selected_rows:
@@ -449,6 +585,108 @@ class ProfilesView(QWidget):
                 self.profile_manager.delete_profile(profile_id, delete_files=True)
             self.load_groups()
             self.load_profiles()
+
+    def start_auto_login(self):
+        selected_rows = self.get_selected_rows()
+        if not selected_rows:
+            QMessageBox.warning(self, "Selection", "Please select at least one profile to auto-login.")
+            return
+
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Credentials File", "", "Text Files (*.txt)")
+        if not file_path:
+            return
+
+        try:
+            credentials = []
+            with open(file_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    parts = line.strip().split(',')
+                    if len(parts) >= 2:
+                        credentials.append((parts[0].strip(), parts[1].strip()))
+
+            if not credentials:
+                QMessageBox.warning(self, "File Error", "No valid credentials found. Format should be: username,password per line.")
+                return
+
+            if len(credentials) < len(selected_rows):
+                QMessageBox.warning(self, "Mismatch", f"Found {len(credentials)} credentials but {len(selected_rows)} profiles selected.\nOnly the first {len(credentials)} profiles will be logged in.")
+
+            import time
+            from selenium.webdriver.common.by import By
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
+
+            for i, row in enumerate(selected_rows):
+                if i >= len(credentials):
+                    break
+
+                profile_name = self.table.item(row, 2).text()
+                profile_id = int(self.table.item(row, 1).text())
+                username, password = credentials[i]
+
+                profile_data = self.profile_manager.get_profile_by_id(profile_id)
+                proxy_info = None
+                if profile_data and profile_data['proxy_id']:
+                    proxy_info = self.proxy_manager.get_proxy_by_id(profile_data['proxy_id'])
+
+                # Create custom task logic for login. Since we want to inject Selenium logic,
+                # we pass a callback or execute it in the Task manager. For now, we will
+                # wrap the auto-login logic into the BrowserLaunchTask by passing a special flag.
+                task = BrowserLaunchTask(profile_id, profile_name, proxy_info, custom_url="https://www.facebook.com/")
+
+                # We monkey-patch the task to execute login after result is emitted
+                def inject_login(driver, u=username, p=password, p_name=profile_name):
+                    try:
+                        logger.info(f"Starting auto-login for {p_name} ({u})")
+                        wait = WebDriverWait(driver, 15)
+
+                        # Wait for email field
+                        email_field = wait.until(EC.presence_of_element_located((By.ID, "email")))
+                        email_field.clear()
+                        email_field.send_keys(u)
+
+                        # Wait for password field
+                        pass_field = wait.until(EC.presence_of_element_located((By.ID, "pass")))
+                        pass_field.clear()
+                        pass_field.send_keys(p)
+
+                        # Find and click login button (name='login')
+                        login_btn = wait.until(EC.element_to_be_clickable((By.NAME, "login")))
+                        time.sleep(1) # Humanize slightly
+                        login_btn.click()
+
+                        logger.info(f"Auto-login submitted for {p_name}")
+                    except Exception as e:
+                        logger.error(f"Auto-login failed for {p_name}: {e}")
+
+                task.signals.result.connect(inject_login)
+
+                def make_running_callback(pid=profile_id):
+                    return lambda driver: self.signal_bridge.update_status(pid, "Running")
+                def make_finished_callback(pid=profile_id):
+                    return lambda t_id: self.signal_bridge.update_status(pid, "Ready")
+                def make_error_callback(pid=profile_id):
+                    return lambda err: self.signal_bridge.update_status(pid, "Failed")
+
+                task.signals.result.connect(make_running_callback(profile_id))
+                task.signals.finished.connect(make_finished_callback(profile_id))
+                task.signals.error.connect(make_error_callback(profile_id))
+
+                self.task_queue.add_task(task)
+                self.signal_bridge.update_status(profile_id, "Pending")
+
+            # If one_by_one is checked, set max threads to 1 temporarily to enforce sequential execution
+            if self.one_by_one_cb.isChecked():
+                self.task_queue.threadpool.setMaxThreadCount(1)
+                # Need to reset it later, could be complex but for now we rely on the user to uncheck it next time
+            else:
+                self.task_queue.threadpool.setMaxThreadCount(50)
+
+            logger.info("Queued auto-login tasks.")
+
+        except Exception as e:
+            logger.error(f"Error reading credentials file: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to read file: {e}")
 
     def start_selected_profiles(self):
         selected_rows = self.get_selected_rows()

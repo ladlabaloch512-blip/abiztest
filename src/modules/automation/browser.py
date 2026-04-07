@@ -32,7 +32,7 @@ class BrowserManager:
                 proxy_info["password"]
             )
             if ext_path:
-                options.add_extension(ext_path)
+                options.add_argument(f"--load-extension={ext_path}")
 
         try:
             logger.info(f"Launching browser profile: {profile_name}")
@@ -59,6 +59,44 @@ class BrowserManager:
                          shutil.copy2(default_uc_path, driver_path)
                      except Exception as copy_e:
                          logger.debug(f"Could not cache chromedriver: {copy_e}")
+
+            # Handle staged cookies for import
+            staged_cookies_path = os.path.join(profile_path, "import_cookies.json")
+            if os.path.exists(staged_cookies_path):
+                try:
+                    import json
+                    with open(staged_cookies_path, "r", encoding="utf-8") as f:
+                        cookies = json.load(f)
+
+                    # Group cookies by domain to avoid InvalidCookieDomainException
+                    cookies_by_domain = {}
+                    for cookie in cookies:
+                        domain = cookie.get('domain', '')
+                        if domain.startswith('.'):
+                            domain = domain[1:]
+                        if not domain:
+                            domain = "google.com" # fallback
+
+                        if domain not in cookies_by_domain:
+                            cookies_by_domain[domain] = []
+                        cookies_by_domain[domain].append(cookie)
+
+                    for domain, domain_cookies in cookies_by_domain.items():
+                        # Navigate to the domain to satisfy Selenium's security policy
+                        driver.get(f"https://{domain}")
+                        for cookie in domain_cookies:
+                            if 'expirationDate' in cookie:
+                                cookie['expiry'] = int(cookie['expirationDate'])
+                                del cookie['expirationDate']
+                            try:
+                                driver.add_cookie(cookie)
+                            except Exception as ce:
+                                logger.debug(f"Failed to set cookie {cookie.get('name')} for {domain}: {ce}")
+
+                    os.remove(staged_cookies_path)
+                    logger.info(f"Successfully injected imported cookies for {profile_name}")
+                except Exception as e:
+                    logger.error(f"Failed to inject cookies for {profile_name}: {e}")
 
             # Keep a reference so it doesn't get garbage collected immediately
             BrowserManager.active_drivers[profile_name] = driver
