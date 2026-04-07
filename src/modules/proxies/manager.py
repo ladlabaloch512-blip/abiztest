@@ -2,6 +2,7 @@ import os
 import zipfile
 import requests
 from src.utils.logger import get_logger
+from src.database.db_manager import DatabaseManager
 
 logger = get_logger("ProxyManager")
 
@@ -9,6 +10,7 @@ class ProxyManager:
     def __init__(self):
         self.extensions_dir = os.path.join(os.getcwd(), 'data', 'proxy_extensions')
         os.makedirs(self.extensions_dir, exist_ok=True)
+        self.db = DatabaseManager()
 
     def generate_proxy_extension(self, proxy_id, proxy_host, proxy_port, proxy_user, proxy_pass):
         """

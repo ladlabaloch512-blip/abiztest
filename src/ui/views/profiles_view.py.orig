@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QTableWidget, QHeaderView, QLabel, QComboBox, QCheckBox, QLineEdit,
                              QTableWidgetItem, QInputDialog, QMessageBox, QDialog, QSplitter, QTextEdit, QMenu, QFileDialog)
-from PyQt6.QtCore import Qt, QTimer, pyqtSlot, QObject, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from src.modules.profiles.manager import ProfileManager
 from src.modules.proxies.manager import ProxyManager
 from src.modules.tasks.queue_manager import TaskQueueManager, BrowserLaunchTask
@@ -308,19 +308,6 @@ class ProfilesView(QWidget):
 
         dialog.exec()
 
-    def import_profiles(self):
-        # Placeholder for profile import
-        logger.info("Import Profiles button clicked")
-        QMessageBox.information(self, "Import Profiles", "Select a folder containing profile backups or a cookies txt file.\n\n(Logic placeholder - files/cookies extraction to be implemented)")
-
-    def export_profiles(self):
-        selected_rows = self.table.selectionModel().selectedRows()
-        if not selected_rows:
-            QMessageBox.warning(self, "Selection", "Please select at least one profile to export.")
-            return
-        logger.info(f"Export Profiles button clicked for {len(selected_rows)} profiles")
-        QMessageBox.information(self, "Export Profiles", f"Select export type (Full Profile / Only Cookies) for {len(selected_rows)} profiles.\n\n(Logic placeholder - zip generation to be implemented)")
-
     def delete_selected_profiles(self):
         selected_rows = self.table.selectionModel().selectedRows()
         if not selected_rows:
@@ -355,21 +342,8 @@ class ProfilesView(QWidget):
             if profile_data and profile_data['proxy_id']:
                 proxy_info = self.proxy_manager.get_proxy_by_id(profile_data['proxy_id'])
 
-            task = BrowserLaunchTask(profile_id, profile_name, proxy_info)
-
-            # Connect task signals to the UI bridge to prevent cross-thread UI updates
-            def make_finished_callback(pid=profile_id):
-                return lambda t_id: self.signal_bridge.update_status(pid, "Running")
-
-            def make_error_callback(pid=profile_id):
-                return lambda err: self.signal_bridge.update_status(pid, "Failed")
-
+            task = BrowserLaunchTask(profile_name, proxy_info)
             task.signals.finished.connect(lambda t_id: logger.info(f"Launch task finished: {t_id}"))
             task.signals.error.connect(lambda err: logger.error(f"Launch task error: {err[1]}"))
-
-            task.signals.finished.connect(make_finished_callback(profile_id))
-            task.signals.error.connect(make_error_callback(profile_id))
-
             self.task_queue.add_task(task)
-            self.signal_bridge.update_status(profile_id, "Pending")
             logger.info(f"Queued start for profile: {profile_name}")
