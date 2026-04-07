@@ -10,12 +10,13 @@ class TaskSignals(QObject):
     progress = pyqtSignal(int)  # Percentage
 
 class BrowserLaunchTask(QRunnable):
-    def __init__(self, profile_id, profile_name, proxy_info=None, custom_url=None):
+    def __init__(self, profile_id, profile_name, proxy_info=None, custom_url=None, external_path=None):
         super().__init__()
         self.profile_id = profile_id
         self.profile_name = profile_name
         self.proxy_info = proxy_info
         self.custom_url = custom_url
+        self.external_path = external_path
         self.signals = TaskSignals()
         self.task_id = f"launch_{self.profile_name}"
 
@@ -26,7 +27,7 @@ class BrowserLaunchTask(QRunnable):
             logger.info(f"Task started: Launching {self.profile_name}")
 
             browser_mgr = BrowserManager()
-            driver = browser_mgr.launch_profile(self.profile_name, self.proxy_info)
+            driver = browser_mgr.launch_profile(self.profile_name, self.proxy_info, self.external_path)
 
             if driver:
                 if self.custom_url:

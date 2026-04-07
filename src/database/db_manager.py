@@ -47,9 +47,17 @@ class DatabaseManager:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     last_opened TIMESTAMP,
                     user_agent TEXT,
-                    status TEXT DEFAULT 'Ready'
+                    status TEXT DEFAULT 'Ready',
+                    external_path TEXT
                 )
             ''')
+
+            # Add external_path column to existing tables if missing (migration)
+            try:
+                cursor.execute('ALTER TABLE profiles ADD COLUMN external_path TEXT')
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
 
             # Proxies Table
             cursor.execute('''

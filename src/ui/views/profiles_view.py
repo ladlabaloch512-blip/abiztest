@@ -427,75 +427,113 @@ class ProfilesView(QWidget):
             if not selected_to_add:
                 return
 
-            import shutil
             added = 0
 
             # Need to normalize paths to check if they are the same directory
             is_same_dir = os.path.normpath(dir_path) == os.path.normpath(self.profile_manager.profiles_dir)
 
             for profile_name in selected_to_add:
-                # 1. Copy directory if it's from outside
-                if not is_same_dir:
-                    source_path = os.path.join(dir_path, profile_name)
-                    target_path = os.path.join(self.profile_manager.profiles_dir, profile_name)
-                    if not os.path.exists(target_path):
-                        try:
-                            shutil.copytree(source_path, target_path)
-                        except Exception as e:
-                            logger.error(f"Failed to copy profile {profile_name}: {e}")
-                            continue
-
-                # 2. Add to database if not exists
+                # Add to database if not exists
                 existing = self.profile_manager.db.fetchone("SELECT id FROM profiles WHERE name = ?", (profile_name,))
                 if not existing:
-                    self.profile_manager.create_profile(profile_name, "Imported")
+                    external_path_to_save = None if is_same_dir else dir_path
+                    self.profile_manager.create_profile(profile_name, "Imported", external_path=external_path_to_save)
                     added += 1
 
-            QMessageBox.information(self, "Scan Complete", f"Successfully imported and registered {added} profiles.")
+            QMessageBox.information(self, "Scan Complete", f"Successfully registered {added} profiles (Managed In-Place).")
             self.load_groups()
             self.load_profiles()
 
     def cleanup_profiles(self):
         reply = QMessageBox.question(self, "Cleanup Profiles", "This will delete all Cache and Temp files for all profiles.\nSessions/Cookies will be preserved.\n\nContinue?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            cleaned, freed_bytes = self.profile_manager.cleanup_profile_files()
-            freed_mb = freed_bytes / (1024 * 1024)
-            QMessageBox.information(self, "Cleanup Complete", f"Cleaned cache for {cleaned} profiles.\nFreed {freed_mb:.2f} MB of space.")
+            # Run in a background thread to avoid UI freeze
+            import threading
+
+            def run_cleanup():
+                try:
+                    cleaned, freed_bytes = self.profile_manager.cleanup_profile_files()
+                    freed_mb = freed_bytes / (1024 * 1024)
+                    # We need to use a signal or QTimer to safely show QMessageBox from main thread
+                    # For simplicity, using a small QTimer delay injected back into the main loop
+                    from PyQt6.QtCore import QTimer
+                    QTimer.singleShot(0, lambda: QMessageBox.information(self, "Cleanup Complete", f"Cleaned cache for {cleaned} profiles.\nFreed {freed_mb:.2f} MB of space."))
+                except Exception as e:
+                    logger.error(f"Cleanup failed: {e}")
+                    from PyQt6.QtCore import QTimer
+                    QTimer.singleShot(0, lambda: QMessageBox.critical(self, "Error", f"Cleanup encountered an error: {e}"))
+
+            self.cleanup_btn.setEnabled(False)
+            self.cleanup_btn.setText("Cleaning...")
+
+            def on_finished():
+                self.cleanup_btn.setEnabled(True)
+                self.cleanup_btn.setText("Files Cleanup")
+
+            thread = threading.Thread(target=run_cleanup)
+            thread.start()
+
+            # Simple polling to reset button
+            def check_thread():
+                if not thread.is_alive():
+                    on_finished()
+                else:
+                    QTimer.singleShot(500, check_thread)
+            QTimer.singleShot(500, check_thread)
 
     def import_profiles(self):
         import os
         import zipfile
+        import threading
+        from PyQt6.QtCore import QMetaObject, Q_ARG, Qt
         file_path, _ = QFileDialog.getOpenFileName(self, "Select ZIP Profile Backup to Import", "", "ZIP Files (*.zip)")
         if file_path:
-            try:
-                # The ZIP file is expected to contain the profile folders directly inside it
-                imported_count = 0
-                with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                    # Get list of top-level directories in the zip
-                    top_level_dirs = set()
-                    for name in zip_ref.namelist():
-                        parts = name.split('/')
-                        if parts[0]:
-                            top_level_dirs.add(parts[0])
+            self.btn_import.setEnabled(False)
+            self.btn_import.setText("Importing...")
 
-                    for profile_name in top_level_dirs:
-                        target_path = os.path.join(self.profile_manager.profiles_dir, profile_name)
-                        if not os.path.exists(target_path):
-                            # Extract specific profile directory
-                            members = [m for m in zip_ref.namelist() if m.startswith(profile_name + '/')]
-                            zip_ref.extractall(path=self.profile_manager.profiles_dir, members=members)
-                            self.profile_manager.create_profile(profile_name, "Imported")
-                            imported_count += 1
+            def run_import():
+                try:
+                    # The ZIP file is expected to contain the profile folders directly inside it
+                    imported_count = 0
+                    with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                        # Get list of top-level directories in the zip
+                        top_level_dirs = set()
+                        for name in zip_ref.namelist():
+                            parts = name.split('/')
+                            if parts[0]:
+                                top_level_dirs.add(parts[0])
 
-                if imported_count > 0:
-                    QMessageBox.information(self, "Import Successful", f"Successfully imported {imported_count} profiles from ZIP.")
-                    self.load_groups()
-                    self.load_profiles()
-                else:
-                    QMessageBox.information(self, "Import Status", "No new profiles were found in the ZIP or they already exist.")
-            except Exception as e:
-                logger.error(f"Failed to import ZIP: {e}")
-                QMessageBox.critical(self, "Import Error", f"Failed to import profiles: {e}")
+                        for profile_name in top_level_dirs:
+                            target_path = os.path.join(self.profile_manager.profiles_dir, profile_name)
+                            if not os.path.exists(target_path):
+                                # Extract specific profile directory
+                                members = [m for m in zip_ref.namelist() if m.startswith(profile_name + '/')]
+                                zip_ref.extractall(path=self.profile_manager.profiles_dir, members=members)
+                                self.profile_manager.create_profile(profile_name, "Imported")
+                                imported_count += 1
+
+                    def show_success():
+                        if imported_count > 0:
+                            QMessageBox.information(self, "Import Successful", f"Successfully imported {imported_count} profiles from ZIP.")
+                            self.load_groups()
+                            self.load_profiles()
+                        else:
+                            QMessageBox.information(self, "Import Status", "No new profiles were found in the ZIP or they already exist.")
+                        self.btn_import.setEnabled(True)
+                        self.btn_import.setText("Import")
+                    QMetaObject.invokeMethod(self, "show_success_import", Qt.ConnectionType.QueuedConnection)
+                    # We patch a method into self temporarily or just use a signal. For simplicity:
+                    self.show_success_import = show_success
+                except Exception as e:
+                    logger.error(f"Failed to import ZIP: {e}")
+                    def show_error():
+                        QMessageBox.critical(self, "Import Error", f"Failed to import profiles: {e}")
+                        self.btn_import.setEnabled(True)
+                        self.btn_import.setText("Import")
+                    self.show_error_import = show_error
+                    QMetaObject.invokeMethod(self, "show_error_import", Qt.ConnectionType.QueuedConnection)
+
+            threading.Thread(target=run_import, daemon=True).start()
 
     def export_profiles(self):
         selected_rows = self.get_selected_rows()
@@ -513,33 +551,61 @@ class ProfilesView(QWidget):
         import zipfile
         import base64
         import tempfile
+        import threading
+        from PyQt6.QtCore import QMetaObject, Q_ARG, Qt
+
         try:
             import win32crypt
         except ImportError:
             QMessageBox.warning(self, "Missing Dependency", "The 'pywin32' package is required for cross-device cookie export on Windows.")
             return
 
-        exported_count = 0
+        self.btn_export.setEnabled(False)
+        self.btn_export.setText("Exporting...")
 
-        try:
-            with zipfile.ZipFile(export_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                for row in selected_rows:
-                    profile_name = self.table.item(row, 2).text()
-                    source_path = os.path.join(self.profile_manager.profiles_dir, profile_name)
+        def run_export():
+            try:
+                exported_count = 0
+                with zipfile.ZipFile(export_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for row in selected_rows:
+                        # Extracting text from QTableWidgetItem in background thread is generally okay since they are copies, but strictly we should pass the text values.
+                        profile_name = self.table.item(row, 2).text()
 
-                    if os.path.exists(source_path):
-                        for root, dirs, files in os.walk(source_path):
-                            for file in files:
-                                file_path = os.path.join(root, file)
-                                # Make arcname relative to profiles_dir so it preserves the profile folder name
-                                arcname = os.path.relpath(file_path, self.profile_manager.profiles_dir)
-                                zipf.write(file_path, arcname)
-                        exported_count += 1
+                        # Get external_path directly from DB since it's not in the table view
+                        profile_data = self.profile_manager.db.fetchone("SELECT external_path FROM profiles WHERE name = ?", (profile_name,))
+                        external_path = profile_data['external_path'] if profile_data else None
 
-            QMessageBox.information(self, "Export Successful", f"Successfully exported {exported_count} profiles to:\n{export_file}")
-        except Exception as e:
-            logger.error(f"Failed to export ZIP: {e}")
-            QMessageBox.critical(self, "Export Error", f"Failed to export profiles: {e}")
+                        if external_path:
+                            source_path = os.path.join(external_path, profile_name)
+                        else:
+                            source_path = os.path.join(self.profile_manager.profiles_dir, profile_name)
+
+                        if os.path.exists(source_path):
+                            for root, dirs, files in os.walk(source_path):
+                                for file in files:
+                                    file_path = os.path.join(root, file)
+                                    # Make arcname relative to profiles_dir so it preserves the profile folder name
+                                    base_dir = external_path if external_path else self.profile_manager.profiles_dir
+                                    arcname = os.path.relpath(file_path, base_dir)
+                                    zipf.write(file_path, arcname)
+                            exported_count += 1
+
+                def show_success():
+                    QMessageBox.information(self, "Export Successful", f"Successfully exported {exported_count} profiles to:\n{export_file}")
+                    self.btn_export.setEnabled(True)
+                    self.btn_export.setText("Export")
+                self.show_success_export = show_success
+                QMetaObject.invokeMethod(self, "show_success_export", Qt.ConnectionType.QueuedConnection)
+            except Exception as e:
+                logger.error(f"Failed to export ZIP: {e}")
+                def show_error():
+                    QMessageBox.critical(self, "Export Error", f"Failed to export profiles: {e}")
+                    self.btn_export.setEnabled(True)
+                    self.btn_export.setText("Export")
+                self.show_error_export = show_error
+                QMetaObject.invokeMethod(self, "show_error_export", Qt.ConnectionType.QueuedConnection)
+
+        threading.Thread(target=run_export, daemon=True).start()
 
     def export_cookies(self):
         selected_rows = self.get_selected_rows()
@@ -696,6 +762,13 @@ class ProfilesView(QWidget):
             if len(credentials) < len(selected_rows):
                 QMessageBox.warning(self, "Mismatch", f"Found {len(credentials)} credentials but {len(selected_rows)} profiles selected.\nOnly the first {len(credentials)} profiles will be logged in.")
 
+            # Prompt for thread count according to instructions: "user se poch ly kitni threads mai krna hai"
+            threads_count, ok = QInputDialog.getInt(self, "Thread Count", "How many profiles to run concurrently?\n(Select 1 for one-by-one)", 1, 1, 50)
+            if not ok:
+                return
+
+            self.task_queue.threadpool.setMaxThreadCount(threads_count)
+
             import time
             from selenium.webdriver.common.by import By
             from selenium.webdriver.support.ui import WebDriverWait
@@ -717,7 +790,7 @@ class ProfilesView(QWidget):
                 # Create custom task logic for login. Since we want to inject Selenium logic,
                 # we pass a callback or execute it in the Task manager. For now, we will
                 # wrap the auto-login logic into the BrowserLaunchTask by passing a special flag.
-                task = BrowserLaunchTask(profile_id, profile_name, proxy_info, custom_url="https://www.facebook.com/")
+                task = BrowserLaunchTask(profile_id, profile_name, proxy_info, custom_url="https://www.facebook.com/", external_path=profile_data.get('external_path'))
 
                 # We monkey-patch the task to execute login after result is emitted
                 def inject_login(driver, u=username, p=password, p_name=profile_name):
@@ -760,14 +833,7 @@ class ProfilesView(QWidget):
                 self.task_queue.add_task(task)
                 self.signal_bridge.update_status(profile_id, "Pending")
 
-            # If one_by_one is checked, set max threads to 1 temporarily to enforce sequential execution
-            if self.one_by_one_cb.isChecked():
-                self.task_queue.threadpool.setMaxThreadCount(1)
-                # Need to reset it later, could be complex but for now we rely on the user to uncheck it next time
-            else:
-                self.task_queue.threadpool.setMaxThreadCount(50)
-
-            logger.info("Queued auto-login tasks.")
+            logger.info(f"Queued auto-login tasks with {threads_count} max threads.")
 
         except Exception as e:
             logger.error(f"Error reading credentials file: {e}")
@@ -778,6 +844,19 @@ class ProfilesView(QWidget):
         if not selected_rows:
             QMessageBox.warning(self, "Selection", "Please select at least one profile to start.")
             return
+
+        # Determine concurrency
+        if self.one_by_one_cb.isChecked():
+            self.task_queue.threadpool.setMaxThreadCount(1)
+        else:
+            # Let's prompt for thread count if they are launching many and not using one-by-one checkbox
+            if len(selected_rows) > 3:
+                threads_count, ok = QInputDialog.getInt(self, "Thread Count", "How many profiles to launch concurrently?", 5, 1, 50)
+                if not ok:
+                    return
+                self.task_queue.threadpool.setMaxThreadCount(threads_count)
+            else:
+                self.task_queue.threadpool.setMaxThreadCount(50)
 
         custom_url = self.custom_url_input.text().strip()
 
@@ -791,7 +870,7 @@ class ProfilesView(QWidget):
             if profile_data and profile_data['proxy_id']:
                 proxy_info = self.proxy_manager.get_proxy_by_id(profile_data['proxy_id'])
 
-            task = BrowserLaunchTask(profile_id, profile_name, proxy_info, custom_url)
+            task = BrowserLaunchTask(profile_id, profile_name, proxy_info, custom_url, external_path=profile_data.get('external_path'))
 
             # Connect task signals to the UI bridge to prevent cross-thread UI updates
             def make_running_callback(pid=profile_id):

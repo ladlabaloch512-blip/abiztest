@@ -13,24 +13,24 @@ class ProfileManager:
         os.makedirs(self.profiles_dir, exist_ok=True)
 
     def get_all_profiles(self):
-        query = "SELECT p.id, p.name, p.group_name, pr.ip, pr.port, p.created_at, p.status FROM profiles p LEFT JOIN proxies pr ON p.proxy_id = pr.id"
+        query = "SELECT p.id, p.name, p.group_name, pr.ip, pr.port, p.created_at, p.status, p.external_path FROM profiles p LEFT JOIN proxies pr ON p.proxy_id = pr.id"
         return self.db.fetchall(query)
 
     def get_profiles_by_group(self, group_name):
         if group_name == "All Groups":
             return self.get_all_profiles()
-        query = "SELECT p.id, p.name, p.group_name, pr.ip, pr.port, p.created_at, p.status FROM profiles p LEFT JOIN proxies pr ON p.proxy_id = pr.id WHERE p.group_name = ?"
+        query = "SELECT p.id, p.name, p.group_name, pr.ip, pr.port, p.created_at, p.status, p.external_path FROM profiles p LEFT JOIN proxies pr ON p.proxy_id = pr.id WHERE p.group_name = ?"
         return self.db.fetchall(query, (group_name,))
 
-    def create_profile(self, name, group_name="Default", proxy_id=None):
+    def create_profile(self, name, group_name="Default", proxy_id=None, external_path=None):
         # Basic fingerprinting
         user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
         query = """
-            INSERT INTO profiles (name, group_name, proxy_id, user_agent, created_at, status)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO profiles (name, group_name, proxy_id, user_agent, created_at, status, external_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """
-        params = (name, group_name, proxy_id, user_agent, datetime.now(), "Ready")
+        params = (name, group_name, proxy_id, user_agent, datetime.now(), "Ready", external_path)
 
         cursor = self.db.execute(query, params)
         if cursor:
@@ -48,17 +48,24 @@ class ProfileManager:
         return created_ids
 
     def delete_profile(self, profile_id, delete_files=True):
-        profile = self.db.fetchone("SELECT name FROM profiles WHERE id = ?", (profile_id,))
+        profile = self.db.fetchone("SELECT name, external_path FROM profiles WHERE id = ?", (profile_id,))
         if not profile:
             return False
 
         name = profile['name']
+        external_path = profile['external_path']
+
         query = "DELETE FROM profiles WHERE id = ?"
         if self.db.execute(query, (profile_id,)):
             logger.info(f"Profile deleted from DB: {name}")
             if delete_files:
                 import shutil
-                profile_path = os.path.join(self.profiles_dir, name)
+
+                if external_path:
+                    profile_path = os.path.join(external_path, name)
+                else:
+                    profile_path = os.path.join(self.profiles_dir, name)
+
                 if os.path.exists(profile_path):
                     try:
                         shutil.rmtree(profile_path)

@@ -13,8 +13,11 @@ class BrowserManager:
         os.makedirs(self.profiles_dir, exist_ok=True)
         self.proxy_manager = ProxyManager()
 
-    def launch_profile(self, profile_name, proxy_info=None):
-        profile_path = os.path.join(self.profiles_dir, profile_name)
+    def launch_profile(self, profile_name, proxy_info=None, external_path=None):
+        if external_path:
+            profile_path = os.path.join(external_path, profile_name)
+        else:
+            profile_path = os.path.join(self.profiles_dir, profile_name)
 
         options = uc.ChromeOptions()
         options.add_argument(f"--user-data-dir={profile_path}")
