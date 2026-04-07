@@ -42,8 +42,7 @@ class BrowserManager:
             # UC normally downloads to %APPDATA%\undetected_chromedriver\undetected_chromedriver.exe
             # But sometimes it redownloads if it thinks it's missing or to be safe.
             # We can force it to use a specific path or let UC handle it if we set driver_executable_path.
-            import appdirs
-            driver_dir = appdirs.user_data_dir("undetected_chromedriver")
+            driver_dir = uc.patcher.Patcher.data_path
             os.makedirs(driver_dir, exist_ok=True)
             driver_path = os.path.join(driver_dir, f"undetected_chromedriver_{main_version}.exe" if os.name == 'nt' else f"undetected_chromedriver_{main_version}")
 
@@ -53,7 +52,7 @@ class BrowserManager:
                  driver = uc.Chrome(options=options, version_main=main_version)
                  # After first download, UC saves it to its default roaming path.
                  # Let's find it and copy it to our versioned path for future reuse.
-                 default_uc_path = os.path.join(appdirs.user_data_dir("undetected_chromedriver"), "undetected_chromedriver.exe" if os.name == 'nt' else "undetected_chromedriver")
+                 default_uc_path = os.path.join(driver_dir, "undetected_chromedriver.exe" if os.name == 'nt' else "undetected_chromedriver")
                  if os.path.exists(default_uc_path) and not os.path.exists(driver_path):
                      import shutil
                      try:
