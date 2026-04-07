@@ -1,27 +1,20 @@
-from PyQt6.QtCore import QRunnable, QThreadPool, QObject, pyqtSignal, pyqtSlot
+from concurrent.futures import ThreadPoolExecutor
+import time
+import eel
 from src.utils.logger import get_logger
 
 logger = get_logger("TaskQueue")
 
-class TaskSignals(QObject):
-    finished = pyqtSignal(str)  # Task ID
-    error = pyqtSignal(tuple)   # (Task ID, Exception string)
-    result = pyqtSignal(object) # Can be anything
-    progress = pyqtSignal(int)  # Percentage
-
-class BrowserLaunchTask(QRunnable):
+class BrowserLaunchTask:
     def __init__(self, profile_id, profile_name, proxy_info=None, custom_url=None, external_path=None, automation_callback=None):
-        super().__init__()
         self.profile_id = profile_id
         self.profile_name = profile_name
         self.proxy_info = proxy_info
         self.custom_url = custom_url
         self.external_path = external_path
         self.automation_callback = automation_callback
-        self.signals = TaskSignals()
         self.task_id = f"launch_{self.profile_name}"
 
-    @pyqtSlot()
     def run(self):
         try:
             from src.modules.automation.browser import BrowserManager
@@ -31,6 +24,11 @@ class BrowserLaunchTask(QRunnable):
             driver = browser_mgr.launch_profile(self.profile_name, self.proxy_info, self.external_path)
 
             if driver:
+                try:
+                    eel.update_profile_status(self.profile_id, "Running")()
+                except Exception:
+                    pass
+
                 if self.custom_url:
                     try:
                         url = self.custom_url
@@ -40,7 +38,6 @@ class BrowserLaunchTask(QRunnable):
                     except Exception as e:
                         logger.error(f"Failed to load custom URL {self.custom_url}: {e}")
 
-                self.signals.result.emit(driver)
 
                 # Execute Selenium automation directly in this background thread
                 if self.automation_callback:
@@ -49,7 +46,6 @@ class BrowserLaunchTask(QRunnable):
                     except Exception as ac_err:
                         logger.error(f"Automation callback failed for {self.profile_name}: {ac_err}")
                 # Now wait for the driver to be manually closed
-                import time
                 try:
                     while True:
                         # Will raise exception if driver window is closed/killed
@@ -81,12 +77,22 @@ class BrowserLaunchTask(QRunnable):
                     except Exception as clean_err:
                         logger.debug(f"Auto-cleanup failed for {self.profile_name}: {clean_err}")
 
-                self.signals.finished.emit(self.task_id)
+                try:
+                    eel.update_profile_status(self.profile_id, "Ready")()
+                except Exception:
+                    pass
             else:
-                self.signals.error.emit((self.task_id, "Failed to launch driver (returned None)"))
+                try:
+                    eel.update_profile_status(self.profile_id, "Failed")()
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"Error in BrowserLaunchTask: {e}")
-            self.signals.error.emit((self.task_id, str(e)))
+            try:
+                eel.update_profile_status(self.profile_id, "Error")()
+            except Exception:
+                pass
+
 
 class TaskQueueManager:
     _instance = None
@@ -94,12 +100,16 @@ class TaskQueueManager:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(TaskQueueManager, cls).__new__(cls)
-            cls._instance.threadpool = QThreadPool()
-            # Increase max thread count so holding threads open with the while loop
-            # doesn't starve the pool and prevent other profiles from launching.
-            cls._instance.threadpool.setMaxThreadCount(50)
-            logger.info(f"Task Queue initialized. Max threads: {cls._instance.threadpool.maxThreadCount()}")
+            cls._instance.threadpool = ThreadPoolExecutor(max_workers=50)
+            logger.info("Task Queue initialized. Max threads: 50")
         return cls._instance
 
+    def set_max_threads(self, max_threads):
+        # ThreadPoolExecutor cannot have its max_workers changed dynamically after creation easily.
+        # We will create a new pool if needed.
+        self.threadpool.shutdown(wait=False)
+        self.threadpool = ThreadPoolExecutor(max_workers=max_threads)
+        logger.info(f"Task Queue Max threads updated to: {max_threads}")
+
     def add_task(self, runnable_task):
-        self.threadpool.start(runnable_task)
+        self.threadpool.submit(runnable_task.run)

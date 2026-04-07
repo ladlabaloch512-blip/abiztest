@@ -1,4 +1,4 @@
-PyQt6
+eel
 undetected-chromedriver
 cryptography
 appdirs
@@ -11,3 +11,4 @@ google-auth-oauthlib
 webdriver-manager
 pycryptodome
 pywin32; sys_platform == 'win32'
+PyQt6

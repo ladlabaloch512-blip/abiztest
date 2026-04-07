@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FB Marketplace Manager Pro</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        bg: '#1e1e2e',
+                        surface: '#313244',
+                        surface2: '#181825',
+                        text: '#cdd6f4',
+                        subtext: '#a6adc8',
+                        primary: '#89b4fa',
+                        danger: '#f38ba8',
+                        success: '#a6e3a1',
+                        warning: '#f9e2af'
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="css/style.css">
+    <script type="text/javascript" src="/eel.js"></script>
+</head>
+<body class="bg-bg text-text font-sans h-screen flex overflow-hidden">
+
+    <!-- Sidebar -->
+    <aside class="w-64 bg-surface2 border-r border-surface flex flex-col">
+        <div class="p-6">
+            <h1 class="text-xl font-bold text-primary tracking-wider">FB MANAGER</h1>
+        </div>
+        <nav class="flex-1 px-4 space-y-2">
+            <a href="#" onclick="switchView('profiles')" class="nav-btn active flex items-center p-3 rounded-lg hover:bg-surface transition">
+                <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                Profiles & Proxies
+            </a>
+            <!-- Placeholders for other views -->
+            <a href="#" class="nav-btn flex items-center p-3 rounded-lg text-subtext hover:bg-surface hover:text-text transition">
+                <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"></path></svg>
+                Auto Login
+            </a>
+            <a href="#" class="nav-btn flex items-center p-3 rounded-lg text-subtext hover:bg-surface hover:text-text transition">
+                <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"></path></svg>
+                Auto List
+            </a>
+        </nav>
+        <div class="p-4 border-t border-surface">
+            <div id="sys-monitor" class="text-xs text-subtext bg-surface p-2 rounded text-center font-mono">
+                CPU: 0% | RAM: 0%
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex flex-col overflow-hidden">
+
+        <!-- Header -->
+        <header class="p-6 flex justify-between items-center border-b border-surface shrink-0">
+            <h2 id="view-title" class="text-2xl font-bold">Profiles & Proxies</h2>
+            <div class="flex space-x-2 items-center">
+                <label class="text-sm text-subtext">Group:</label>
+                <select id="groupFilter" onchange="loadProfiles()" class="bg-surface border border-surface text-text text-sm rounded-lg focus:ring-primary focus:border-primary block p-2">
+                    <option value="All Groups">All Groups</option>
+                </select>
+                <button onclick="scanProfiles()" class="ml-2 bg-surface hover:bg-subtext hover:text-bg text-text px-4 py-2 rounded-lg text-sm font-semibold transition">Scan</button>
+                <button onclick="cleanupFiles()" id="btn-cleanup" class="bg-danger hover:opacity-80 text-bg px-4 py-2 rounded-lg text-sm font-semibold transition">Cleanup</button>
+            </div>
+        </header>
+
+        <!-- Actions Bar -->
+        <div class="p-4 flex flex-wrap gap-3 border-b border-surface shrink-0 items-center bg-surface2/50">
+            <button onclick="createBulk()" class="btn-primary">Create Bulk</button>
+            <button onclick="importProfiles()" class="btn-secondary">Import ZIP</button>
+            <button onclick="exportProfiles()" class="btn-secondary">Export ZIP</button>
+            <button onclick="deleteSelected()" class="bg-danger text-bg px-4 py-2 rounded-lg text-sm font-semibold hover:opacity-80 transition">Delete</button>
+            <button onclick="manageProxies()" class="btn-secondary">Manage Proxies</button>
+            <button onclick="assignProxy()" class="btn-secondary">Assign Proxy</button>
+            <div class="w-px h-6 bg-surface mx-2"></div>
+            <button onclick="startAutoLogin()" class="bg-[#89b4fa] text-bg px-4 py-2 rounded-lg text-sm font-bold hover:opacity-80 transition shadow-lg shadow-primary/20">FB Auto Login</button>
+            <input type="text" id="customUrl" placeholder="Custom URL (Optional)" class="bg-surface border border-surface text-text text-sm rounded-lg p-2 w-48 ml-auto">
+            <label class="flex items-center space-x-2 text-sm">
+                <input type="checkbox" id="oneByOne" class="rounded bg-surface border-surface text-primary">
+                <span>One by One</span>
+            </label>
+            <button onclick="startSelected()" class="bg-success text-bg px-4 py-2 rounded-lg text-sm font-bold hover:opacity-80 transition shadow-lg shadow-success/20">Start Selected</button>
+        </div>
+
+        <!-- Table Area -->
+        <div class="flex-1 overflow-auto p-4">
+            <table class="w-full text-left text-sm text-subtext">
+                <thead class="text-xs text-text uppercase bg-surface sticky top-0">
+                    <tr>
+                        <th scope="col" class="p-4 w-10">
+                            <input type="checkbox" id="selectAll" onclick="toggleSelectAll()" class="rounded bg-bg border-surface text-primary focus:ring-primary">
+                        </th>
+                        <th scope="col" class="px-4 py-3">ID</th>
+                        <th scope="col" class="px-4 py-3">Profile Name</th>
+                        <th scope="col" class="px-4 py-3">Group</th>
+                        <th scope="col" class="px-4 py-3">Proxy</th>
+                        <th scope="col" class="px-4 py-3">Status</th>
+                    </tr>
+                </thead>
+                <tbody id="profilesTableBody" class="divide-y divide-surface">
+                    <!-- Rows injected by JS -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Log Console -->
+        <div class="h-48 bg-[#11111b] border-t border-surface p-2 shrink-0">
+            <div class="flex justify-between items-center mb-2 px-2">
+                <span class="text-xs font-bold text-subtext uppercase tracking-wider">Console Logs</span>
+                <button onclick="document.getElementById('logContent').innerHTML=''" class="text-xs text-subtext hover:text-text">Clear</button>
+            </div>
+            <div id="logContent" class="h-[calc(100%-24px)] overflow-y-auto font-mono text-xs p-2 space-y-1">
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Overlay Loader -->
+    <div id="loader" class="hidden fixed inset-0 bg-bg/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center">
+        <div class="w-16 h-16 border-4 border-surface border-t-primary rounded-full animate-spin"></div>
+        <p id="loader-text" class="mt-4 text-primary font-semibold tracking-wide">Processing...</p>
+    </div>
+
+    <!-- Proxy Modal -->
+    <div id="proxyModal" class="hidden fixed inset-0 bg-bg/80 backdrop-blur-sm z-40 flex flex-col items-center justify-center">
+        <div class="bg-surface2 border border-surface rounded-xl p-6 w-[500px] shadow-2xl flex flex-col max-h-[80vh]">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-bold">Manage Proxies</h3>
+                <button onclick="document.getElementById('proxyModal').classList.add('hidden')" class="text-subtext hover:text-danger">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="flex space-x-2 mb-4 shrink-0">
+                <input type="text" id="proxyInput" placeholder="IP:PORT:USER:PASS or IP:PORT" class="bg-surface border border-surface text-text text-sm rounded-lg p-2 flex-1 focus:ring-primary">
+                <button onclick="addProxy()" class="btn-primary">Add</button>
+            </div>
+            <div class="overflow-y-auto flex-1">
+                <table class="w-full text-left text-sm text-subtext">
+                    <thead class="text-xs text-text uppercase bg-surface sticky top-0">
+                        <tr>
+                            <th class="px-3 py-2">ID</th>
+                            <th class="px-3 py-2">IP:Port</th>
+                            <th class="px-3 py-2">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="proxyTableBody" class="divide-y divide-surface">
+                        <!-- Proxies injected here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/main.js"></script>
+</body>
+</html>
