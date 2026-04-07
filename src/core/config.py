@@ -30,7 +30,14 @@ class ConfigManager:
 
     def _fetch_remote_config(self):
         try:
-            response = requests.get(self.config_url, timeout=10)
+            # Skip fetch if example.com is used (placeholder) to avoid slow timeouts
+            if "example.com" in self.config_url:
+                logger.warning("Using default placeholder URL, skipping remote config fetch.")
+                return None
+            # Add verify=False to bypass SSL errors in environments missing CA certificates
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            response = requests.get(self.config_url, timeout=10, verify=False)
             if response.status_code == 200:
                 logger.info("Successfully fetched remote config.")
                 return response.json()

@@ -30,10 +30,13 @@ def open_buy_link():
     webbrowser.open(full_link)
 task_queue = TaskQueueManager()
 
-# Hidden root window for tkinter file dialogs
-root = tk.Tk()
-root.withdraw()
-root.attributes('-topmost', True)
+# Hidden root window for tkinter file dialogs (created lazily to avoid display issues)
+def get_tk_root():
+    if not hasattr(get_tk_root, "root"):
+        get_tk_root.root = tk.Tk()
+        get_tk_root.root.withdraw()
+        get_tk_root.root.attributes('-topmost', True)
+    return get_tk_root.root
 
 @eel.expose
 def get_system_stats():
@@ -127,18 +130,33 @@ def launch_profiles(profile_ids, custom_url, one_by_one, thread_count):
 
 @eel.expose
 def pick_directory():
-    path = filedialog.askdirectory(title="Select Directory")
-    return path
+    try:
+        root = get_tk_root()
+        path = filedialog.askdirectory(title="Select Directory")
+        return path
+    except Exception as e:
+        logger.error(f"Error opening directory picker: {e}")
+        return ""
 
 @eel.expose
 def pick_file(title="Select File", filetypes=[("All Files", "*.*")]):
-    path = filedialog.askopenfilename(title=title, filetypes=filetypes)
-    return path
+    try:
+        root = get_tk_root()
+        path = filedialog.askopenfilename(title=title, filetypes=filetypes)
+        return path
+    except Exception as e:
+        logger.error(f"Error opening file picker: {e}")
+        return ""
 
 @eel.expose
 def pick_save_file(title="Save File", default_name="", filetypes=[("All Files", "*.*")]):
-    path = filedialog.asksaveasfilename(title=title, initialfile=default_name, filetypes=filetypes)
-    return path
+    try:
+        root = get_tk_root()
+        path = filedialog.asksaveasfilename(title=title, initialfile=default_name, filetypes=filetypes)
+        return path
+    except Exception as e:
+        logger.error(f"Error opening file saver: {e}")
+        return ""
 
 @eel.expose
 def scan_profiles(dir_path):

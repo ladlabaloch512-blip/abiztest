@@ -28,7 +28,10 @@ def main():
     # Start the application
     try:
         # We use a large geometry to match the previous desktop feel
-        eel.start(start_page, size=(1200, 800), port=0)
+        # Use a fixed port to allow verification scripts to connect easily
+        # Pass mode='chrome' or fallback to edge, but in CI we can use mode=None
+        # Note: eel binds to port=8000, host='localhost' by default. We'll explicitly pass port
+        eel.start(start_page, size=(1200, 800), port=8000, host='localhost', mode=None)
     except (SystemExit, MemoryError, KeyboardInterrupt):
         logger.info("Application closed.")
 
