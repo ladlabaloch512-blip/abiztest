@@ -521,17 +521,16 @@ class ProfilesView(QWidget):
                             QMessageBox.information(self, "Import Status", "No new profiles were found in the ZIP or they already exist.")
                         self.btn_import.setEnabled(True)
                         self.btn_import.setText("Import")
-                    QMetaObject.invokeMethod(self, "show_success_import", Qt.ConnectionType.QueuedConnection)
-                    # We patch a method into self temporarily or just use a signal. For simplicity:
-                    self.show_success_import = show_success
+                    from PyQt6.QtCore import QTimer
+                    QTimer.singleShot(0, show_success)
                 except Exception as e:
                     logger.error(f"Failed to import ZIP: {e}")
                     def show_error():
                         QMessageBox.critical(self, "Import Error", f"Failed to import profiles: {e}")
                         self.btn_import.setEnabled(True)
                         self.btn_import.setText("Import")
-                    self.show_error_import = show_error
-                    QMetaObject.invokeMethod(self, "show_error_import", Qt.ConnectionType.QueuedConnection)
+                    from PyQt6.QtCore import QTimer
+                    QTimer.singleShot(0, show_error)
 
             threading.Thread(target=run_import, daemon=True).start()
 
@@ -594,18 +593,31 @@ class ProfilesView(QWidget):
                     QMessageBox.information(self, "Export Successful", f"Successfully exported {exported_count} profiles to:\n{export_file}")
                     self.btn_export.setEnabled(True)
                     self.btn_export.setText("Export")
-                self.show_success_export = show_success
-                QMetaObject.invokeMethod(self, "show_success_export", Qt.ConnectionType.QueuedConnection)
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(0, show_success)
             except Exception as e:
                 logger.error(f"Failed to export ZIP: {e}")
                 def show_error():
                     QMessageBox.critical(self, "Export Error", f"Failed to export profiles: {e}")
                     self.btn_export.setEnabled(True)
                     self.btn_export.setText("Export")
-                self.show_error_export = show_error
-                QMetaObject.invokeMethod(self, "show_error_export", Qt.ConnectionType.QueuedConnection)
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(0, show_error)
 
         threading.Thread(target=run_export, daemon=True).start()
+
+    def format_netscape_cookies(self, cookies_list):
+        lines = ["# Netscape HTTP Cookie File", "# https://curl.haxx.se/rfc/cookie_spec.html", "# This is a generated file!  Do not edit.", ""]
+        for c in cookies_list:
+            domain = c.get('domain', '')
+            include_subdomains = "TRUE" if domain.startswith('.') else "FALSE"
+            path = c.get('path', '/')
+            secure = "TRUE" if c.get('secure') else "FALSE"
+            expiry = str(int(c.get('expirationDate', 0))) if c.get('expirationDate') else "0"
+            name = c.get('name', '')
+            value = c.get('value', '')
+            lines.append(f"{domain}\t{include_subdomains}\t{path}\t{secure}\t{expiry}\t{name}\t{value}")
+        return "\n".join(lines)
 
     def export_cookies(self):
         selected_rows = self.get_selected_rows()
@@ -613,113 +625,217 @@ class ProfilesView(QWidget):
             QMessageBox.warning(self, "Selection", "Please select at least one profile to export cookies from.")
             return
 
-        export_file, _ = QFileDialog.getSaveFileName(self, "Save Cookies as ZIP", "cookies_backup.zip", "ZIP Files (*.zip)")
-        if not export_file:
+        format_reply = QMessageBox.question(self, "Export Format", "Export as JSON?\n(Click 'No' to export as Netscape TXT)", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
+        if format_reply == QMessageBox.StandardButton.Cancel:
             return
 
+        export_ext = ".json" if format_reply == QMessageBox.StandardButton.Yes else ".txt"
+
+        reply = QMessageBox.question(self, "Export Method", "Do you want to save as a ZIP archive?\n(Click 'No' to select a folder and save files directly)", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
+        if reply == QMessageBox.StandardButton.Cancel:
+            return
+
+        export_mode = "ZIP" if reply == QMessageBox.StandardButton.Yes else "DIR"
+
+        target_path = ""
+        if export_mode == "ZIP":
+            target_path, _ = QFileDialog.getSaveFileName(self, "Save Cookies as ZIP", f"cookies_backup.zip", "ZIP Files (*.zip)")
+            if not target_path:
+                return
+        else:
+            target_path = QFileDialog.getExistingDirectory(self, "Select Folder to Export Cookies")
+            if not target_path:
+                return
+
         import os
+        import json
         import zipfile
+        import sqlite3
+        import base64
+        import tempfile
+        try:
+            import win32crypt
+        except ImportError:
+            QMessageBox.warning(self, "Missing Dependency", "The 'pywin32' package is required for cross-device cookie export on Windows.")
+            return
+
         exported_count = 0
 
         try:
-            with zipfile.ZipFile(export_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                for row in selected_rows:
-                    profile_name = self.table.item(row, 2).text()
+            zipf = zipfile.ZipFile(target_path, 'w', zipfile.ZIP_DEFLATED) if export_mode == "ZIP" else None
+
+            for row in selected_rows:
+                profile_name = self.table.item(row, 2).text()
+
+                profile_data = self.profile_manager.db.fetchone("SELECT external_path FROM profiles WHERE name = ?", (profile_name,))
+                external_path = profile_data['external_path'] if profile_data else None
+
+                if external_path:
+                    source_path = os.path.join(external_path, profile_name)
+                else:
                     source_path = os.path.join(self.profile_manager.profiles_dir, profile_name)
 
-                    cookies_path = os.path.join(source_path, "Default", "Network", "Cookies")
-                    local_state_path = os.path.join(source_path, "Local State")
+                cookies_path = os.path.join(source_path, "Default", "Network", "Cookies")
+                local_state_path = os.path.join(source_path, "Local State")
 
-                    if os.path.exists(cookies_path) and os.path.exists(local_state_path):
-                        # Extract DPAPI key
-                        try:
-                            with open(local_state_path, "r", encoding="utf-8") as f:
-                                local_state = json.load(f)
-                            encrypted_key = base64.b64decode(local_state["os_crypt"]["encrypted_key"])
-                            encrypted_key = encrypted_key[5:] # Remove DPAPI prefix
-                            decrypted_key = win32crypt.CryptUnprotectData(encrypted_key, None, None, None, 0)[1]
+                if os.path.exists(cookies_path) and os.path.exists(local_state_path):
+                    # Extract DPAPI key
+                    try:
+                        with open(local_state_path, "r", encoding="utf-8") as f:
+                            local_state = json.load(f)
+                        encrypted_key = base64.b64decode(local_state["os_crypt"]["encrypted_key"])
+                        encrypted_key = encrypted_key[5:] # Remove DPAPI prefix
+                        decrypted_key = win32crypt.CryptUnprotectData(encrypted_key, None, None, None, 0)[1]
 
-                            # Connect to SQLite DB
-                            from Crypto.Cipher import AES
+                        # Connect to SQLite DB
+                        from Crypto.Cipher import AES
 
-                            def decrypt_value(enc_value, key):
-                                try:
-                                    iv = enc_value[3:15]
-                                    payload = enc_value[15:]
-                                    cipher = AES.new(key, AES.MODE_GCM, iv)
-                                    return cipher.decrypt(payload)[:-16].decode()
-                                except Exception:
-                                    return ""
+                        def decrypt_value(enc_value, key):
+                            try:
+                                iv = enc_value[3:15]
+                                payload = enc_value[15:]
+                                cipher = AES.new(key, AES.MODE_GCM, iv)
+                                return cipher.decrypt(payload)[:-16].decode()
+                            except Exception:
+                                return ""
 
-                            conn = sqlite3.connect(cookies_path)
-                            cursor = conn.cursor()
-                            cursor.execute("SELECT host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly FROM cookies")
+                        conn = sqlite3.connect(cookies_path)
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly FROM cookies")
 
-                            cookies_list = []
-                            for host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly in cursor.fetchall():
-                                decrypted_val = value
-                                if encrypted_value:
-                                    decrypted_val = decrypt_value(encrypted_value, decrypted_key)
+                        cookies_list = []
+                        for host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly in cursor.fetchall():
+                            decrypted_val = value
+                            if encrypted_value:
+                                decrypted_val = decrypt_value(encrypted_value, decrypted_key)
 
-                                cookies_list.append({
-                                    "domain": host_key,
-                                    "name": name,
-                                    "value": decrypted_val,
-                                    "path": path,
-                                    "expirationDate": expires_utc / 1000000 - 11644473600 if expires_utc else None,
-                                    "secure": bool(is_secure),
-                                    "httpOnly": bool(is_httponly)
-                                })
-                            conn.close()
+                            cookies_list.append({
+                                "domain": host_key,
+                                "name": name,
+                                "value": decrypted_val,
+                                "path": path,
+                                "expirationDate": expires_utc / 1000000 - 11644473600 if expires_utc else None,
+                                "secure": bool(is_secure),
+                                "httpOnly": bool(is_httponly)
+                            })
+                        conn.close()
 
-                            # Write JSON to ZIP
-                            if cookies_list:
-                                json_data = json.dumps(cookies_list, indent=4)
-                                zipf.writestr(f"{profile_name}_cookies.json", json_data)
-                                exported_count += 1
+                        if cookies_list:
+                            file_content = json.dumps(cookies_list, indent=4) if export_ext == ".json" else self.format_netscape_cookies(cookies_list)
+                            file_name = f"{profile_name}_cookies{export_ext}"
 
-                        except Exception as e:
-                            logger.error(f"Error decrypting cookies for {profile_name}: {e}")
+                            if export_mode == "ZIP":
+                                zipf.writestr(file_name, file_content)
+                            else:
+                                with open(os.path.join(target_path, file_name), 'w', encoding='utf-8') as f:
+                                    f.write(file_content)
+                            exported_count += 1
 
-            QMessageBox.information(self, "Export Successful", f"Successfully exported decrypted JSON cookies for {exported_count} profiles to:\n{export_file}")
+                    except Exception as e:
+                        logger.error(f"Error decrypting cookies for {profile_name}: {e}")
+
+            if zipf:
+                zipf.close()
+
+            QMessageBox.information(self, "Export Successful", f"Successfully exported cookies for {exported_count} profiles to:\n{target_path}")
         except Exception as e:
-            logger.error(f"Failed to export cookies ZIP: {e}")
+            logger.error(f"Failed to export cookies: {e}")
             QMessageBox.critical(self, "Export Error", f"Failed to export cookies: {e}")
+
+    def parse_netscape_cookies(self, file_path):
+        import time
+        cookies = []
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.startswith('#') or not line.strip():
+                        continue
+                    parts = line.strip().split('\t')
+                    if len(parts) >= 7:
+                        cookies.append({
+                            "domain": parts[0],
+                            "httpOnly": parts[0].startswith('#HttpOnly_'),
+                            "path": parts[2],
+                            "secure": parts[3].lower() == 'true',
+                            "expirationDate": float(parts[4]) if parts[4].isdigit() and int(parts[4]) > 0 else time.time() + 31536000,
+                            "name": parts[5],
+                            "value": parts[6]
+                        })
+        except Exception as e:
+            logger.error(f"Failed to parse netscape cookies from {file_path}: {e}")
+        return cookies
 
     def import_cookies(self):
         import os
         import json
-        import zipfile
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select ZIP Cookies Backup to Import", "", "ZIP Files (*.zip)")
-        if file_path:
-            try:
-                imported_count = 0
-                with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                    for filename in zip_ref.namelist():
-                        if filename.endswith("_cookies.json"):
-                            profile_name = filename.replace("_cookies.json", "")
-                            target_path = os.path.join(self.profile_manager.profiles_dir, profile_name)
+        import shutil
 
-                            # Create profile if it doesn't exist to allow true cross-device migration
-                            if not os.path.exists(target_path):
-                                os.makedirs(target_path, exist_ok=True)
-                                self.profile_manager.create_profile(profile_name, "Imported")
+        reply = QMessageBox.question(self, "Import Cookies",
+                                     "How do you want to import cookies?\n\nYes: Select individual files (.json, .txt)\nNo: Select a folder to bulk import",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel)
 
-                            # Save the JSON file into the profile directory so the auto-login/startup routine can inject it
-                            extract_path = os.path.join(target_path, "import_cookies.json")
-                            with open(extract_path, "wb") as f:
-                                f.write(zip_ref.read(filename))
-                            imported_count += 1
+        if reply == QMessageBox.StandardButton.Cancel:
+            return
 
-                if imported_count > 0:
-                    self.load_groups()
-                    self.load_profiles()
-                    QMessageBox.information(self, "Import Successful", f"Successfully imported cookies for {imported_count} profiles.\nThey will be injected on next launch.")
-                else:
-                    QMessageBox.information(self, "Import Status", "No cookies were imported.")
-            except Exception as e:
-                logger.error(f"Failed to import cookies ZIP: {e}")
-                QMessageBox.critical(self, "Import Error", f"Failed to import cookies: {e}")
+        files_to_process = []
+
+        if reply == QMessageBox.StandardButton.Yes:
+            file_paths, _ = QFileDialog.getOpenFileNames(self, "Select Cookie Files", "", "Cookie Files (*.json *.txt)")
+            if not file_paths:
+                return
+            files_to_process = file_paths
+        else:
+            dir_path = QFileDialog.getExistingDirectory(self, "Select Folder with Cookie Files")
+            if not dir_path:
+                return
+            for f in os.listdir(dir_path):
+                if f.endswith('.json') or f.endswith('.txt'):
+                    files_to_process.append(os.path.join(dir_path, f))
+
+        if not files_to_process:
+            QMessageBox.information(self, "Import Status", "No valid cookie files found.")
+            return
+
+        imported_count = 0
+        try:
+            for file_path in files_to_process:
+                filename = os.path.basename(file_path)
+                profile_name, ext = os.path.splitext(filename)
+
+                # Check if it's named with _cookies suffix from our own export, if so, strip it
+                if profile_name.endswith("_cookies"):
+                    profile_name = profile_name[:-8]
+
+                target_path = os.path.join(self.profile_manager.profiles_dir, profile_name)
+
+                # Create profile if it doesn't exist
+                existing = self.profile_manager.db.fetchone("SELECT id FROM profiles WHERE name = ?", (profile_name,))
+                if not existing:
+                    os.makedirs(target_path, exist_ok=True)
+                    self.profile_manager.create_profile(profile_name, "Imported")
+
+                extract_path = os.path.join(target_path, "import_cookies.json")
+
+                if ext.lower() == '.json':
+                    shutil.copy(file_path, extract_path)
+                    imported_count += 1
+                elif ext.lower() == '.txt':
+                    parsed = self.parse_netscape_cookies(file_path)
+                    if parsed:
+                        with open(extract_path, 'w', encoding='utf-8') as f:
+                            json.dump(parsed, f, indent=4)
+                        imported_count += 1
+
+            if imported_count > 0:
+                self.load_groups()
+                self.load_profiles()
+                QMessageBox.information(self, "Import Successful", f"Successfully imported cookies for {imported_count} profiles.\nThey will be injected on next launch.")
+            else:
+                QMessageBox.warning(self, "Import Status", "Failed to parse any cookies from the selected files.")
+
+        except Exception as e:
+            logger.error(f"Failed to import cookies: {e}")
+            QMessageBox.critical(self, "Import Error", f"Failed to import cookies: {e}")
 
     def delete_selected_profiles(self):
         selected_rows = self.get_selected_rows()

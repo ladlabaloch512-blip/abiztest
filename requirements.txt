@@ -1,6 +1,7 @@
 PyQt6
 undetected-chromedriver
 cryptography
+appdirs
 psutil
 requests
 discord.py

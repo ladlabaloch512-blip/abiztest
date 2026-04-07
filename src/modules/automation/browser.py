@@ -23,7 +23,9 @@ class BrowserManager:
         options.add_argument(f"--user-data-dir={profile_path}")
         options.add_argument("--no-first-run")
         options.add_argument("--no-service-autorun")
-        options.add_argument("--password-store=basic")
+
+        # Remove --password-store=basic so that existing cookies/passwords
+        # encrypted with OS keyring (DPAPI on Windows) remain accessible.
 
         # Apply proxy if provided
         if proxy_info:
