@@ -481,6 +481,23 @@ class ProfilesView(QWidget):
                     QTimer.singleShot(500, check_thread)
             QTimer.singleShot(500, check_thread)
 
+    @pyqtSlot(int)
+    def _on_import_success(self, count):
+        if count > 0:
+            QMessageBox.information(self, "Import Successful", f"Successfully imported {count} profiles from ZIP.")
+            self.load_groups()
+            self.load_profiles()
+        else:
+            QMessageBox.information(self, "Import Status", "No new profiles were found in the ZIP or they already exist.")
+        self.btn_import.setEnabled(True)
+        self.btn_import.setText("Import")
+
+    @pyqtSlot(str)
+    def _on_import_error(self, error_msg):
+        QMessageBox.critical(self, "Import Error", f"Failed to import profiles: {error_msg}")
+        self.btn_import.setEnabled(True)
+        self.btn_import.setText("Import")
+
     def import_profiles(self):
         import os
         import zipfile
@@ -512,27 +529,24 @@ class ProfilesView(QWidget):
                                 self.profile_manager.create_profile(profile_name, "Imported")
                                 imported_count += 1
 
-                    def show_success():
-                        if imported_count > 0:
-                            QMessageBox.information(self, "Import Successful", f"Successfully imported {imported_count} profiles from ZIP.")
-                            self.load_groups()
-                            self.load_profiles()
-                        else:
-                            QMessageBox.information(self, "Import Status", "No new profiles were found in the ZIP or they already exist.")
-                        self.btn_import.setEnabled(True)
-                        self.btn_import.setText("Import")
-                    from PyQt6.QtCore import QTimer
-                    QTimer.singleShot(0, show_success)
+                    QMetaObject.invokeMethod(self, "_on_import_success", Qt.ConnectionType.QueuedConnection, Q_ARG(int, imported_count))
                 except Exception as e:
                     logger.error(f"Failed to import ZIP: {e}")
-                    def show_error():
-                        QMessageBox.critical(self, "Import Error", f"Failed to import profiles: {e}")
-                        self.btn_import.setEnabled(True)
-                        self.btn_import.setText("Import")
-                    from PyQt6.QtCore import QTimer
-                    QTimer.singleShot(0, show_error)
+                    QMetaObject.invokeMethod(self, "_on_import_error", Qt.ConnectionType.QueuedConnection, Q_ARG(str, str(e)))
 
             threading.Thread(target=run_import, daemon=True).start()
+
+    @pyqtSlot(int, str)
+    def _on_export_success(self, count, file_path):
+        QMessageBox.information(self, "Export Successful", f"Successfully exported {count} profiles to:\n{file_path}")
+        self.btn_export.setEnabled(True)
+        self.btn_export.setText("Export")
+
+    @pyqtSlot(str)
+    def _on_export_error(self, error_msg):
+        QMessageBox.critical(self, "Export Error", f"Failed to export profiles: {error_msg}")
+        self.btn_export.setEnabled(True)
+        self.btn_export.setText("Export")
 
     def export_profiles(self):
         selected_rows = self.get_selected_rows()
@@ -589,20 +603,10 @@ class ProfilesView(QWidget):
                                     zipf.write(file_path, arcname)
                             exported_count += 1
 
-                def show_success():
-                    QMessageBox.information(self, "Export Successful", f"Successfully exported {exported_count} profiles to:\n{export_file}")
-                    self.btn_export.setEnabled(True)
-                    self.btn_export.setText("Export")
-                from PyQt6.QtCore import QTimer
-                QTimer.singleShot(0, show_success)
+                QMetaObject.invokeMethod(self, "_on_export_success", Qt.ConnectionType.QueuedConnection, Q_ARG(int, exported_count), Q_ARG(str, export_file))
             except Exception as e:
                 logger.error(f"Failed to export ZIP: {e}")
-                def show_error():
-                    QMessageBox.critical(self, "Export Error", f"Failed to export profiles: {e}")
-                    self.btn_export.setEnabled(True)
-                    self.btn_export.setText("Export")
-                from PyQt6.QtCore import QTimer
-                QTimer.singleShot(0, show_error)
+                QMetaObject.invokeMethod(self, "_on_export_error", Qt.ConnectionType.QueuedConnection, Q_ARG(str, str(e)))
 
         threading.Thread(target=run_export, daemon=True).start()
 
