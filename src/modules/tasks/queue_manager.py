@@ -10,11 +10,12 @@ class TaskSignals(QObject):
     progress = pyqtSignal(int)  # Percentage
 
 class BrowserLaunchTask(QRunnable):
-    def __init__(self, profile_id, profile_name, proxy_info=None):
+    def __init__(self, profile_id, profile_name, proxy_info=None, custom_url=None):
         super().__init__()
         self.profile_id = profile_id
         self.profile_name = profile_name
         self.proxy_info = proxy_info
+        self.custom_url = custom_url
         self.signals = TaskSignals()
         self.task_id = f"launch_{self.profile_name}"
 
@@ -28,6 +29,12 @@ class BrowserLaunchTask(QRunnable):
             driver = browser_mgr.launch_profile(self.profile_name, self.proxy_info)
 
             if driver:
+                if self.custom_url:
+                    try:
+                        driver.get(self.custom_url)
+                    except Exception as e:
+                        logger.error(f"Failed to load custom URL {self.custom_url}: {e}")
+
                 self.signals.result.emit(driver)
                 # Now wait for the driver to be manually closed
                 import time

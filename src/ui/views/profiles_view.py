@@ -94,10 +94,17 @@ class ProfilesView(QWidget):
         actions_bar.addWidget(self.one_by_one_cb)
         actions_bar.addWidget(self.start_btn)
 
+        # Select All Checkbox (placed above table or in corner)
+        self.select_all_cb = QCheckBox("Select All")
+        self.select_all_cb.stateChanged.connect(self.toggle_select_all)
+        toolbar.insertWidget(0, self.select_all_cb)
+
         # Table
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["ID", "Profile Name", "Group", "Proxy", "Created", "Status"])
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels(["", "ID", "Profile Name", "Group", "Proxy", "Created", "Status"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(0, 30)
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -135,14 +142,33 @@ class ProfilesView(QWidget):
         formatted_msg = f"<span style='color: {color}'>{message}</span>"
         self.log_console.append(formatted_msg)
 
+    def toggle_select_all(self, state):
+        for row in range(self.table.rowCount()):
+            item = self.table.cellWidget(row, 0)
+            if item:
+                # The checkbox is the first child of the layout inside the QWidget wrapper
+                cb = item.layout().itemAt(0).widget()
+                if isinstance(cb, QCheckBox):
+                    cb.setChecked(state == Qt.CheckState.Checked.value)
+
+    def get_selected_rows(self):
+        selected_rows = []
+        for row in range(self.table.rowCount()):
+            item = self.table.cellWidget(row, 0)
+            if item:
+                cb = item.layout().itemAt(0).widget()
+                if isinstance(cb, QCheckBox) and cb.isChecked():
+                    selected_rows.append(row)
+        return selected_rows
+
     @pyqtSlot(int, str)
     def update_profile_status(self, profile_id, status):
         # Update DB
         self.profile_manager.db.execute("UPDATE profiles SET status = ? WHERE id = ?", (status, profile_id))
         # Update UI Table
         for row in range(self.table.rowCount()):
-            if int(self.table.item(row, 0).text()) == profile_id:
-                self.table.item(row, 5).setText(status)
+            if int(self.table.item(row, 1).text()) == profile_id:
+                self.table.item(row, 6).setText(status)
                 break
 
     def load_groups(self):
@@ -164,44 +190,58 @@ class ProfilesView(QWidget):
         else:
             profiles = self.profile_manager.get_profiles_by_group(group)
 
+        self.select_all_cb.blockSignals(True)
+        self.select_all_cb.setChecked(False)
+        self.select_all_cb.blockSignals(False)
+
         self.table.setRowCount(0)
         for row_idx, profile in enumerate(profiles):
             self.table.insertRow(row_idx)
 
+            # Checkbox
+            cb = QCheckBox()
+            # Center the checkbox
+            cb_widget = QWidget()
+            cb_layout = QHBoxLayout(cb_widget)
+            cb_layout.addWidget(cb)
+            cb_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cb_layout.setContentsMargins(0, 0, 0, 0)
+            self.table.setCellWidget(row_idx, 0, cb_widget)
+
             # ID
             item_id = QTableWidgetItem(str(profile['id']))
             item_id.setFlags(item_id.flags() ^ Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(row_idx, 0, item_id)
+            self.table.setItem(row_idx, 1, item_id)
 
             # Name
             item_name = QTableWidgetItem(profile['name'])
             item_name.setFlags(item_name.flags() ^ Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(row_idx, 1, item_name)
+            self.table.setItem(row_idx, 2, item_name)
 
             # Group
             item_group = QTableWidgetItem(profile['group_name'] or "Default")
             item_group.setFlags(item_group.flags() ^ Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(row_idx, 2, item_group)
+            self.table.setItem(row_idx, 3, item_group)
 
             # Proxy
             proxy_str = f"{profile['ip']}:{profile['port']}" if profile['ip'] and profile['port'] else "None"
             item_proxy = QTableWidgetItem(proxy_str)
             item_proxy.setFlags(item_proxy.flags() ^ Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(row_idx, 3, item_proxy)
+            self.table.setItem(row_idx, 4, item_proxy)
 
             # Created
             created_str = str(profile['created_at']).split('.')[0] if profile['created_at'] else ""
             item_created = QTableWidgetItem(created_str)
             item_created.setFlags(item_created.flags() ^ Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(row_idx, 4, item_created)
+            self.table.setItem(row_idx, 5, item_created)
 
             # Status
             item_status = QTableWidgetItem(profile['status'] or "Unknown")
             item_status.setFlags(item_status.flags() ^ Qt.ItemFlag.ItemIsEditable)
-            self.table.setItem(row_idx, 5, item_status)
+            self.table.setItem(row_idx, 6, item_status)
 
     def show_context_menu(self, position):
-        selected_rows = self.table.selectionModel().selectedRows()
+        selected_rows = self.get_selected_rows()
         if not selected_rows:
             return
 
@@ -215,9 +255,8 @@ class ProfilesView(QWidget):
             group, ok = QInputDialog.getText(self, "Assign Group", "Enter new group name:")
             if ok and group:
                 group_name = group.strip() if group.strip() else "Default"
-                for model_index in selected_rows:
-                    row = model_index.row()
-                    profile_id = int(self.table.item(row, 0).text())
+                for row in selected_rows:
+                    profile_id = int(self.table.item(row, 1).text())
                     self.profile_manager.db.execute("UPDATE profiles SET group_name = ? WHERE id = ?", (group_name, profile_id))
                 self.load_groups()
                 self.load_profiles()
@@ -233,9 +272,8 @@ class ProfilesView(QWidget):
                 if proxy_sel != "None":
                     proxy_id = int(proxy_sel.split(" - ")[0])
 
-                for model_index in selected_rows:
-                    row = model_index.row()
-                    p_id = int(self.table.item(row, 0).text())
+                for row in selected_rows:
+                    p_id = int(self.table.item(row, 1).text())
                     self.profile_manager.db.execute("UPDATE profiles SET proxy_id = ? WHERE id = ?", (proxy_id, p_id))
 
                 self.load_profiles()
@@ -329,56 +367,75 @@ class ProfilesView(QWidget):
 
     def import_profiles(self):
         import os
-        import shutil
-        dir_path = QFileDialog.getExistingDirectory(self, "Select Directory containing Profiles to Import")
-        if dir_path:
-            imported_count = 0
-            for item in os.listdir(dir_path):
-                source_path = os.path.join(dir_path, item)
-                if os.path.isdir(source_path):
-                    target_path = os.path.join(self.profile_manager.profiles_dir, item)
-                    if not os.path.exists(target_path):
-                        shutil.copytree(source_path, target_path)
-                        self.profile_manager.create_profile(item, "Imported")
-                        imported_count += 1
-            if imported_count > 0:
-                QMessageBox.information(self, "Import Successful", f"Successfully imported {imported_count} profiles.")
-                self.load_groups()
-                self.load_profiles()
-            else:
-                QMessageBox.information(self, "Import Status", "No new profiles were found to import.")
+        import zipfile
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select ZIP Profile Backup to Import", "", "ZIP Files (*.zip)")
+        if file_path:
+            try:
+                # The ZIP file is expected to contain the profile folders directly inside it
+                imported_count = 0
+                with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                    # Get list of top-level directories in the zip
+                    top_level_dirs = set()
+                    for name in zip_ref.namelist():
+                        parts = name.split('/')
+                        if parts[0]:
+                            top_level_dirs.add(parts[0])
+
+                    for profile_name in top_level_dirs:
+                        target_path = os.path.join(self.profile_manager.profiles_dir, profile_name)
+                        if not os.path.exists(target_path):
+                            # Extract specific profile directory
+                            members = [m for m in zip_ref.namelist() if m.startswith(profile_name + '/')]
+                            zip_ref.extractall(path=self.profile_manager.profiles_dir, members=members)
+                            self.profile_manager.create_profile(profile_name, "Imported")
+                            imported_count += 1
+
+                if imported_count > 0:
+                    QMessageBox.information(self, "Import Successful", f"Successfully imported {imported_count} profiles from ZIP.")
+                    self.load_groups()
+                    self.load_profiles()
+                else:
+                    QMessageBox.information(self, "Import Status", "No new profiles were found in the ZIP or they already exist.")
+            except Exception as e:
+                logger.error(f"Failed to import ZIP: {e}")
+                QMessageBox.critical(self, "Import Error", f"Failed to import profiles: {e}")
 
     def export_profiles(self):
-        selected_rows = self.table.selectionModel().selectedRows()
+        selected_rows = self.get_selected_rows()
         if not selected_rows:
             QMessageBox.warning(self, "Selection", "Please select at least one profile to export.")
             return
 
-        export_dir = QFileDialog.getExistingDirectory(self, "Select Export Destination Folder")
-        if not export_dir:
+        export_file, _ = QFileDialog.getSaveFileName(self, "Save Export as ZIP", "profiles_backup.zip", "ZIP Files (*.zip)")
+        if not export_file:
             return
 
         import os
-        import shutil
+        import zipfile
         exported_count = 0
 
-        for model_index in selected_rows:
-            row = model_index.row()
-            profile_name = self.table.item(row, 1).text()
-            source_path = os.path.join(self.profile_manager.profiles_dir, profile_name)
+        try:
+            with zipfile.ZipFile(export_file, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for row in selected_rows:
+                    profile_name = self.table.item(row, 2).text()
+                    source_path = os.path.join(self.profile_manager.profiles_dir, profile_name)
 
-            if os.path.exists(source_path):
-                target_path = os.path.join(export_dir, profile_name)
-                # If target already exists, we will overwrite or skip. For simplicity, remove first.
-                if os.path.exists(target_path):
-                    shutil.rmtree(target_path)
-                shutil.copytree(source_path, target_path)
-                exported_count += 1
+                    if os.path.exists(source_path):
+                        for root, dirs, files in os.walk(source_path):
+                            for file in files:
+                                file_path = os.path.join(root, file)
+                                # Make arcname relative to profiles_dir so it preserves the profile folder name
+                                arcname = os.path.relpath(file_path, self.profile_manager.profiles_dir)
+                                zipf.write(file_path, arcname)
+                        exported_count += 1
 
-        QMessageBox.information(self, "Export Successful", f"Successfully exported {exported_count} profiles to:\n{export_dir}")
+            QMessageBox.information(self, "Export Successful", f"Successfully exported {exported_count} profiles to:\n{export_file}")
+        except Exception as e:
+            logger.error(f"Failed to export ZIP: {e}")
+            QMessageBox.critical(self, "Export Error", f"Failed to export profiles: {e}")
 
     def delete_selected_profiles(self):
-        selected_rows = self.table.selectionModel().selectedRows()
+        selected_rows = self.get_selected_rows()
         if not selected_rows:
             QMessageBox.warning(self, "Selection", "Please select at least one profile to delete.")
             return
@@ -387,23 +444,23 @@ class ProfilesView(QWidget):
                                      f"Are you sure you want to delete {len(selected_rows)} selected profile(s)?\nThis will also delete the profile folders.",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            for model_index in selected_rows:
-                row = model_index.row()
-                profile_id = int(self.table.item(row, 0).text())
+            for row in selected_rows:
+                profile_id = int(self.table.item(row, 1).text())
                 self.profile_manager.delete_profile(profile_id, delete_files=True)
             self.load_groups()
             self.load_profiles()
 
     def start_selected_profiles(self):
-        selected_rows = self.table.selectionModel().selectedRows()
+        selected_rows = self.get_selected_rows()
         if not selected_rows:
             QMessageBox.warning(self, "Selection", "Please select at least one profile to start.")
             return
 
-        for model_index in selected_rows:
-            row = model_index.row()
-            profile_name = self.table.item(row, 1).text()
-            profile_id = int(self.table.item(row, 0).text())
+        custom_url = self.custom_url_input.text().strip()
+
+        for row in selected_rows:
+            profile_name = self.table.item(row, 2).text()
+            profile_id = int(self.table.item(row, 1).text())
 
             # Get full profile data to get proxy
             profile_data = self.profile_manager.get_profile_by_id(profile_id)
@@ -411,7 +468,7 @@ class ProfilesView(QWidget):
             if profile_data and profile_data['proxy_id']:
                 proxy_info = self.proxy_manager.get_proxy_by_id(profile_data['proxy_id'])
 
-            task = BrowserLaunchTask(profile_id, profile_name, proxy_info)
+            task = BrowserLaunchTask(profile_id, profile_name, proxy_info, custom_url)
 
             # Connect task signals to the UI bridge to prevent cross-thread UI updates
             def make_running_callback(pid=profile_id):
