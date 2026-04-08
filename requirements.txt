@@ -1,0 +1,14 @@
+eel
+undetected-chromedriver
+cryptography
+appdirs
+psutil
+requests
+discord.py
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+webdriver-manager
+pycryptodome
+pywin32; sys_platform == 'win32'
+PyQt6
